@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Extracts photo metadata and geolocation (latitude/longitude) from the public
-Google Photos shared album:
-  https://photos.app.goo.gl/jRkKPneBYiDHSSpYA
+Extracts photo metadata, JSON info blobs, and geolocation (latitude/longitude)
+from the public Google Photos shared albums:
+  1. Menlo Park Historical Photo Archive:
+     https://photos.app.goo.gl/jRkKPneBYiDHSSpYA
+  2. Santa Cruz Public Libraries - Photograph Collection:
+     https://photos.app.goo.gl/XmBhLr6D7ck8fCUu6
 
 Outputs:
   - data/photos.json
@@ -11,24 +14,38 @@ Outputs:
 
 import datetime
 import json
+import math
 import os
 import re
 import urllib.parse
 import urllib.request
 from collections import defaultdict
-import math
 
-SHORT_URL = "https://photos.app.goo.gl/jRkKPneBYiDHSSpYA"
+ALBUMS = [
+    {
+        "slug": "menlo-park",
+        "title": "Menlo Park Historical Photo Archive",
+        "shortTitle": "Menlo Park",
+        "shortUrl": "https://photos.app.goo.gl/jRkKPneBYiDHSSpYA",
+        "defaultLocation": "Menlo Park, CA",
+        "center": [37.4529, -122.1842],
+        "zoom": 15,
+    },
+    {
+        "slug": "santa-cruz",
+        "title": "Santa Cruz Public Libraries — Photograph Collection",
+        "shortTitle": "Santa Cruz",
+        "shortUrl": "https://photos.app.goo.gl/XmBhLr6D7ck8fCUu6",
+        "defaultLocation": "Santa Cruz County, CA",
+        "center": [37.0150, -122.0550],
+        "zoom": 11,
+    },
+]
+
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-
-
-def fetch_album_html(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req) as resp:
-        return resp.read().decode("utf-8")
 
 
 def call_batchexecute(rpc_calls: list) -> str:
@@ -47,15 +64,83 @@ def call_batchexecute(rpc_calls: list) -> str:
         return resp.read().decode("utf-8")
 
 
-def parse_year_and_caption(caption: str, filename: str, ts_ms: int, tz_offset_ms: int):
+def extract_year_from_text(text: str):
+    if not text:
+        return None
+    m = re.search(r"\b(18[4-9]\d|19\d{2}|20[0-2]\d)\b", str(text))
+    return int(m.group(1)) if m else None
+
+
+def parse_photo_metadata(caption: str, filename: str, ts_ms: int, tz_offset_ms: int):
+    """
+    Parses either:
+      1. A JSON metadata blob in the Google Photos 'info' (description) field, OR
+      2. A plain-text archival caption (e.g. '0055-3 Menlo Park Railroad Station (1855)').
+    Returns:
+      (catalog_id, title, notes, year, year_label, decade, info_blob)
+    """
     cleaned = (caption or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    # Check if the Google Photos info field is a JSON blob
+    if cleaned.startswith("{") and cleaned.endswith("}"):
+        try:
+            blob = json.loads(cleaned)
+            if isinstance(blob, dict):
+                catalog_id = str(blob.get("identifier") or "").strip() or None
+                title = str(blob.get("title") or "").strip() or filename or "Untitled Photo"
+                notes = str(blob.get("description") or "").strip()
+
+                raw_date = str(blob.get("date") or "").strip()
+                coverage = str(blob.get("coverage") or "").strip()
+
+                year = extract_year_from_text(raw_date)
+                year_label = raw_date if raw_date else None
+
+                if year is None and coverage:
+                    year = extract_year_from_text(coverage)
+                    if year and not year_label:
+                        # Check if coverage has decade like '1910s'
+                        m_dec = re.search(r"\b(18[4-9]\d|19\d{2}|20[0-2]\d)s?\b", coverage)
+                        year_label = m_dec.group(0) if m_dec else str(year)
+
+                if year is None:
+                    year = extract_year_from_text(title + " " + notes)
+                    if year and not year_label:
+                        year_label = str(year)
+
+                if year is None and ts_ms is not None:
+                    try:
+                        dt = datetime.datetime(
+                            1970, 1, 1, tzinfo=datetime.timezone.utc
+                        ) + datetime.timedelta(milliseconds=ts_ms + (tz_offset_ms or 0))
+                        if 1850 <= dt.year <= 2020 and dt.year not in (1969, 1970):
+                            year = dt.year
+                            if not year_label:
+                                year_label = str(year)
+                    except Exception:
+                        pass
+
+                decade = (year // 10) * 10 if year else None
+                return (
+                    catalog_id,
+                    title,
+                    notes,
+                    year,
+                    year_label or "Undated",
+                    decade,
+                    blob,
+                )
+        except Exception:
+            pass
+
+    # Fallback: Plain-text caption parsing (Menlo Park format)
     lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
     first_line = lines[0] if lines else ""
     notes = "\n".join(lines[1:]) if len(lines) > 1 else ""
 
     catalog_id = None
     title = first_line
-    m_cat = re.match(r"^(\d{3,4}[a-zA-Z]?)\s+(.*)$", first_line)
+    m_cat = re.match(r"^(\d{3,4}[a-zA-Z]?(?:-\d+)?)\s+(.*)$", first_line)
     if m_cat:
         catalog_id = m_cat.group(1)
         title = m_cat.group(2).strip()
@@ -67,22 +152,21 @@ def parse_year_and_caption(caption: str, filename: str, ts_ms: int, tz_offset_ms
     if not title:
         title = filename or "Untitled Photo"
 
-    # Extract historical year (e.g. "(c. 1885)", "(1917)", "(1940s)")
     year = None
     year_label = None
 
     m_paren = re.search(
-        r"\(([^)]*?\b(?:18[5-9]\d|19\d{2}|200\d|201[0-8])s?\b[^)]*?)\)",
+        r"\(([^)]*?\b(?:18[4-9]\d|19\d{2}|200\d|201[0-8])s?\b[^)]*?)\)",
         title + " " + notes,
     )
     if m_paren:
         year_label = m_paren.group(1).strip()
-        m_yr = re.search(r"\b(18[5-9]\d|19\d{2}|200\d|201[0-8])\b", year_label)
+        m_yr = re.search(r"\b(18[4-9]\d|19\d{2}|200\d|201[0-8])\b", year_label)
         if m_yr:
             year = int(m_yr.group(1))
 
     if year is None:
-        m_any = re.findall(r"\b(18[5-9]\d|19\d{2}|200\d|201[0-8])\b", title + " " + notes)
+        m_any = re.findall(r"\b(18[4-9]\d|19\d{2}|200\d|201[0-8])\b", title + " " + notes)
         if m_any:
             year = int(m_any[0])
             year_label = str(year)
@@ -99,12 +183,15 @@ def parse_year_and_caption(caption: str, filename: str, ts_ms: int, tz_offset_ms
             pass
 
     decade = (year // 10) * 10 if year else None
-    return catalog_id, title, notes, year, year_label, decade
+    return catalog_id, title, notes, year, year_label or "Unknown Date", decade, None
 
 
-def build_dataset():
-    print(f"Fetching {SHORT_URL}...")
-    req = urllib.request.Request(SHORT_URL, headers={"User-Agent": USER_AGENT})
+def fetch_single_album(album_cfg: dict):
+    short_url = album_cfg["shortUrl"]
+    slug = album_cfg["slug"]
+    print(f"Fetching [{slug}] {short_url}...")
+
+    req = urllib.request.Request(short_url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req) as resp:
         final_url = resp.geturl()
         html = resp.read().decode("utf-8")
@@ -145,7 +232,7 @@ def build_dataset():
             seen.add(item[0])
             unique_items.append(item)
 
-    print(f"Found {len(unique_items)} photos in album. Fetching per-photo geolocation metadata...")
+    print(f"  -> Found {len(unique_items)} photos in [{slug}]. Fetching per-photo metadata...")
     info_map = {}
     batch_size = 50
     for start in range(0, len(unique_items), batch_size):
@@ -165,85 +252,128 @@ def build_dataset():
                             pinfo = parsed[0]
                             info_map[pinfo[0]] = pinfo
 
+    return album_id, album_key, unique_items, info_map
+
+
+def build_dataset():
     geolocated_photos = []
     unmapped_photos = []
     coord_groups = defaultdict(list)
+    album_summaries = []
+    total_album_photos = 0
 
-    for idx, item in enumerate(unique_items):
-        pid = item[0]
-        base_url = item[1][0]
-        width = item[1][1]
-        height = item[1][2]
-        pinfo = info_map.get(pid) or []
+    for album_cfg in ALBUMS:
+        slug = album_cfg["slug"]
+        album_id, album_key, unique_items, info_map = fetch_single_album(album_cfg)
+        total_album_photos += len(unique_items)
+        album_geo_count = 0
+        album_unmapped_count = 0
 
-        caption = pinfo[1] if len(pinfo) > 1 else ""
-        filename = pinfo[2] if len(pinfo) > 2 else ""
-        ts_ms = pinfo[3] if len(pinfo) > 3 else item[2]
-        tz_offset_ms = pinfo[4] if len(pinfo) > 4 else item[4]
-        file_bytes = pinfo[5] if len(pinfo) > 5 else None
+        for idx, item in enumerate(unique_items):
+            pid = item[0]
+            base_url = item[1][0]
+            width = item[1][1]
+            height = item[1][2]
+            pinfo = info_map.get(pid) or []
 
-        catalog_id, title, notes, year, year_label, decade = parse_year_and_caption(
-            caption, filename, ts_ms, tz_offset_ms
-        )
+            caption = pinfo[1] if len(pinfo) > 1 else ""
+            filename = pinfo[2] if len(pinfo) > 2 else ""
+            ts_ms = pinfo[3] if len(pinfo) > 3 else item[2]
+            tz_offset_ms = pinfo[4] if len(pinfo) > 4 else item[4]
+            file_bytes = pinfo[5] if len(pinfo) > 5 else None
 
-        location_name = None
-        if len(pinfo) > 13 and pinfo[13]:
-            try:
-                location_name = pinfo[13][2][0][1][0][0]
-            except Exception:
-                location_name = None
-
-        photo_Share_url = (
-            f"https://photos.google.com/share/{album_id}/photo/{pid}?key={album_key}"
-        )
-
-        record = {
-            "id": pid,
-            "index": idx,
-            "catalogId": catalog_id,
-            "title": title,
-            "notes": notes,
-            "rawCaption": (caption or "").strip(),
-            "filename": filename,
-            "year": year,
-            "yearLabel": year_label or (str(year) if year else "Unknown Date"),
-            "decade": decade,
-            "timestamp": ts_ms,
-            "width": width,
-            "height": height,
-            "fileBytes": file_bytes,
-            "baseUrl": base_url,
-            "thumbUrl": f"{base_url}=w360-h270-c",
-            "previewUrl": f"{base_url}=w800",
-            "fullUrl": f"{base_url}=w1600",
-            "downloadUrl": f"{base_url}=d",
-            "albumPhotoUrl": photo_Share_url,
-            "locationName": location_name or "Menlo Park, CA",
-        }
-
-        gps = pinfo[9] if len(pinfo) > 9 else None
-        if gps and isinstance(gps, list) and gps[0] and len(gps[0]) == 2:
-            lat = round(gps[0][0] / 1e7, 7)
-            lng = round(gps[0][1] / 1e7, 7)
-            record["lat"] = lat
-            record["lng"] = lng
-            record["googleMapsUrl"] = f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
-            record["streetViewUrl"] = (
-                f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lng}"
+            catalog_id, title, notes, year, year_label, decade, info_blob = parse_photo_metadata(
+                caption, filename, ts_ms, tz_offset_ms
             )
-            geolocated_photos.append(record)
-            coord_groups[(lat, lng)].append(record)
-        else:
-            unmapped_photos.append(record)
+
+            location_name = None
+            if info_blob and info_blob.get("coverage"):
+                location_name = str(info_blob["coverage"]).split(";")[0].strip()
+            if not location_name and len(pinfo) > 13 and pinfo[13]:
+                try:
+                    location_name = pinfo[13][2][0][1][0][0]
+                except Exception:
+                    location_name = None
+
+            photo_share_url = (
+                f"https://photos.google.com/share/{album_id}/photo/{pid}?key={album_key}"
+            )
+
+            record = {
+                "id": pid,
+                "album": slug,
+                "albumTitle": album_cfg["title"],
+                "albumShortTitle": album_cfg["shortTitle"],
+                "albumShortUrl": album_cfg["shortUrl"],
+                "index": idx,
+                "catalogId": catalog_id,
+                "title": title,
+                "notes": notes,
+                "filename": filename,
+                "year": year,
+                "yearLabel": year_label,
+                "decade": decade,
+                "timestamp": ts_ms,
+                "width": width,
+                "height": height,
+                "fileBytes": file_bytes,
+                "baseUrl": base_url,
+                "thumbUrl": f"{base_url}=w360-h270-c",
+                "previewUrl": f"{base_url}=w800",
+                "fullUrl": f"{base_url}=w1600",
+                "downloadUrl": f"{base_url}=d",
+                "albumPhotoUrl": photo_share_url,
+                "locationName": location_name or album_cfg["defaultLocation"],
+            }
+
+            if info_blob:
+                record["info"] = info_blob
+
+            gps = pinfo[9] if len(pinfo) > 9 else None
+            if gps and isinstance(gps, list) and gps[0] and len(gps[0]) == 2:
+                lat = round(gps[0][0] / 1e7, 7)
+                lng = round(gps[0][1] / 1e7, 7)
+                record["lat"] = lat
+                record["lng"] = lng
+                record["googleMapsUrl"] = (
+                    f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                )
+                record["streetViewUrl"] = (
+                    f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={lat},{lng}"
+                )
+                geolocated_photos.append(record)
+                coord_groups[(lat, lng)].append(record)
+                album_geo_count += 1
+            else:
+                unmapped_photos.append(record)
+                album_unmapped_count += 1
+
+        album_summaries.append(
+            {
+                "slug": slug,
+                "title": album_cfg["title"],
+                "shortTitle": album_cfg["shortTitle"],
+                "shortUrl": album_cfg["shortUrl"],
+                "albumId": album_id,
+                "albumKey": album_key,
+                "totalPhotos": len(unique_items),
+                "geolocatedCount": album_geo_count,
+                "unmappedCount": album_unmapped_count,
+                "center": album_cfg["center"],
+                "zoom": album_cfg["zoom"],
+            }
+        )
+        print(
+            f"  -> [{slug}] {album_geo_count} geolocated, {album_unmapped_count} unmapped."
+        )
 
     # Sort co-located photos chronologically and compute subtle spiral offsets
-    # so that in "All 439 Pins" mode, co-located pins don't completely hide each other.
     location_clusters = []
     for loc_idx, ((lat, lng), group) in enumerate(
         sorted(coord_groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     ):
         group.sort(key=lambda p: (p["year"] or 9999, p["catalogId"] or "", p["index"]))
-        loc_id = f"loc-{loc_idx + 1:02d}"
+        loc_id = f"loc-{loc_idx + 1:03d}"
         n = len(group)
         cos_lat = math.cos(math.radians(lat))
         for i, photo in enumerate(group):
@@ -254,11 +384,12 @@ def build_dataset():
                 photo["displayLat"] = lat
                 photo["displayLng"] = lng
             else:
-                # Golden-angle spiral around the true coordinate (~12m to 45m radius)
                 angle = i * 2.399963229728653
                 radius_deg = 0.00011 * math.sqrt(i + 1)
                 photo["displayLat"] = round(lat + radius_deg * math.sin(angle), 7)
-                photo["displayLng"] = round(lng + (radius_deg * math.cos(angle)) / max(cos_lat, 0.2), 7)
+                photo["displayLng"] = round(
+                    lng + (radius_deg * math.cos(angle)) / max(cos_lat, 0.2), 7
+                )
 
         years_in_loc = [p["year"] for p in group if p["year"]]
         location_clusters.append(
@@ -267,10 +398,10 @@ def build_dataset():
                 "lat": lat,
                 "lng": lng,
                 "count": n,
+                "album": group[0]["album"],
                 "primaryTitle": group[0]["title"],
                 "minYear": min(years_in_loc) if years_in_loc else None,
                 "maxYear": max(years_in_loc) if years_in_loc else None,
-                "coverThumbUrl": group[0]["thumbUrl"],
                 "photoIds": [p["id"] for p in group],
             }
         )
@@ -279,15 +410,14 @@ def build_dataset():
 
     if not geolocated_photos:
         raise RuntimeError(
-            f"Extracted 0 geolocated photos out of {len(unique_items)} items; "
+            f"Extracted 0 geolocated photos out of {total_album_photos} items; "
             "aborting write to preserve existing dataset."
         )
 
-    output = {
-        "albumTitle": "MenloPark Historical Photo Archive",
-        "albumShortUrl": SHORT_URL,
-        "albumId": album_id,
-        "totalAlbumPhotos": len(unique_items),
+    full_output = {
+        "albumTitle": "Historical Photo Time Machine — Menlo Park & Santa Cruz",
+        "albums": album_summaries,
+        "totalAlbumPhotos": total_album_photos,
         "geolocatedCount": len(geolocated_photos),
         "unmappedCount": len(unmapped_photos),
         "uniqueLocationCount": len(location_clusters),
@@ -296,13 +426,42 @@ def build_dataset():
         "unmappedPhotos": unmapped_photos,
     }
 
+    # For data/photos.js loaded in the browser, omit derived URLs and unmappedPhotos to keep the bundle fast
+    omit_keys = {
+        "thumbUrl",
+        "previewUrl",
+        "fullUrl",
+        "downloadUrl",
+        "albumPhotoUrl",
+        "googleMapsUrl",
+        "streetViewUrl",
+        "albumTitle",
+        "albumShortTitle",
+        "albumShortUrl",
+    }
+    compact_photos = [
+        {k: v for k, v in p.items() if k not in omit_keys and v is not None}
+        for p in geolocated_photos
+    ]
+
+    browser_output = {
+        "albumTitle": full_output["albumTitle"],
+        "albums": album_summaries,
+        "totalAlbumPhotos": total_album_photos,
+        "geolocatedCount": len(geolocated_photos),
+        "unmappedCount": len(unmapped_photos),
+        "uniqueLocationCount": len(location_clusters),
+        "photos": compact_photos,
+        "locations": location_clusters,
+    }
+
     os.makedirs("data", exist_ok=True)
     with open("data/photos.json", "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2)
+        json.dump(full_output, f, indent=2)
 
     with open("data/photos.js", "w", encoding="utf-8") as f:
         f.write("window.ALBUM_DATA = ")
-        json.dump(output, f, separators=(",", ":"))
+        json.dump(browser_output, f, separators=(",", ":"))
         f.write(";\n")
 
     print(

@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Menlo Park Time Machine — Historical Google Maps Photo Atlas</title>
+  <title>Historical Photo Time Machine — Menlo Park &amp; Santa Cruz Google Maps Atlas</title>
   <meta
     name="description"
-    content="Interactive Google Maps explorer for the Menlo Park Historical Photo Archive. Explore 439 geolocated historical photographs dropped as pins across Menlo Park, California."
+    content="Interactive Google Maps explorer for the Menlo Park Historical Photo Archive and Santa Cruz Public Libraries Photograph Collection. Explore 2,655 geolocated historical photographs dropped as pins."
   />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,21 +27,58 @@
         </svg>
       </div>
       <div class="brand-titles">
-        <h1>Menlo Park Time Machine</h1>
+        <h1>Historical Photo Time Machine</h1>
         <div class="brand-subtitle">
-          <span id="header-summary-text">518 Geolocated Photos · 1855–2013</span>
+          <span id="header-summary-text">2,655 Geolocated Photos · Menlo Park &amp; Santa Cruz</span>
           <span>·</span>
           <a
-            id="source-album-link"
             href="https://photos.app.goo.gl/jRkKPneBYiDHSSpYA"
             target="_blank"
             rel="noopener noreferrer"
-          >Google Photos Album ↗</a>
+          >Menlo Park Album ↗</a>
+          <span>·</span>
+          <a
+            href="https://photos.app.goo.gl/XmBhLr6D7ck8fCUu6"
+            target="_blank"
+            rel="noopener noreferrer"
+          >Santa Cruz Album ↗</a>
         </div>
       </div>
     </div>
 
     <div class="header-controls">
+      <!-- Album Filter Switcher -->
+      <div id="album-filter-control" class="segmented-control" role="group" aria-label="Album filter">
+        <button
+          class="seg-btn active"
+          data-album="all"
+          type="button"
+          title="Show photos from both Menlo Park and Santa Cruz albums"
+        >
+          <span>All Albums</span>
+          <span id="album-all-count" class="seg-count">2655</span>
+        </button>
+        <button
+          class="seg-btn"
+          data-album="menlo-park"
+          type="button"
+          title="Filter to Menlo Park Historical Photo Archive and zoom to Menlo Park"
+        >
+          <span>Menlo Park</span>
+          <span id="album-mp-count" class="seg-count">518</span>
+        </button>
+        <button
+          class="seg-btn"
+          data-album="santa-cruz"
+          type="button"
+          title="Filter to Santa Cruz Public Libraries Collection and zoom to Santa Cruz"
+        >
+          <span>Santa Cruz</span>
+          <span id="album-sc-count" class="seg-count">2137</span>
+        </button>
+      </div>
+
+      <!-- Pin Mode Switcher -->
       <div class="segmented-control" role="group" aria-label="Pin display mode">
         <button
           id="mode-all-pins-btn"
@@ -50,7 +87,7 @@
           title="Drop an individual pin for each geolocated photo"
         >
           <span>All Photo Pins</span>
-          <span id="all-pins-count" class="seg-count">518</span>
+          <span id="all-pins-count" class="seg-count">2655</span>
         </button>
         <button
           id="mode-clustered-btn"
@@ -59,7 +96,7 @@
           title="Group co-located photos into unique landmark pins"
         >
           <span>By Landmark</span>
-          <span id="landmark-pins-count" class="seg-count">125</span>
+          <span id="landmark-pins-count" class="seg-count">672</span>
         </button>
       </div>
 
@@ -95,7 +132,7 @@
             id="search-input"
             class="search-input"
             type="search"
-            placeholder="Search street, landmark, year, or #ID..."
+            placeholder="Search title, subject, tag, town, creator, year, or #ID..."
             autocomplete="off"
           />
           <button
@@ -114,7 +151,7 @@
         <div id="era-pills" class="era-pills" role="tablist" aria-label="Filter by historical era">
           <button class="era-pill active" data-era="all" type="button">All Eras</button>
           <button class="era-pill" data-era="1800s" type="button">
-            <span class="era-dot" style="background: var(--era-1800s)"></span>1855–1899
+            <span class="era-dot" style="background: var(--era-1800s)"></span>1850–1899
           </button>
           <button class="era-pill" data-era="1900s" type="button">
             <span class="era-dot" style="background: var(--era-1900s)"></span>1900–1919
@@ -131,18 +168,29 @@
           <button class="era-pill" data-era="1980s" type="button">
             <span class="era-dot" style="background: var(--era-1980s)"></span>1980+
           </button>
+          <button class="era-pill" data-era="unknown" type="button">
+            <span class="era-dot" style="background: var(--pin-red)"></span>Undated
+          </button>
         </div>
       </div>
 
       <div class="sidebar-status-bar">
-        <span>Showing <strong id="visible-photo-count" class="status-count">439</strong> photos</span>
+        <span>Showing <strong id="visible-photo-count" class="status-count">2655</strong> photos</span>
         <div class="region-jump-group">
-          <button id="jump-menlo-park" class="region-link" type="button" title="Zoom to Menlo Park, California (436 photos)">
-            Menlo Park, CA
+          <button id="jump-menlo-park" class="region-link" type="button" title="Zoom to Menlo Park, California">
+            Menlo Park
           </button>
           <span>·</span>
-          <button id="jump-ireland" class="region-link" type="button" title="Zoom to Menlo Castle, Galway, Ireland (3 photos)">
-            Menlo, Ireland (3)
+          <button id="jump-santa-cruz" class="region-link" type="button" title="Zoom to Santa Cruz, California">
+            Santa Cruz
+          </button>
+          <span>·</span>
+          <button id="jump-boulder-creek" class="region-link" type="button" title="Zoom to Boulder Creek / San Lorenzo Valley">
+            Boulder Creek
+          </button>
+          <span>·</span>
+          <button id="jump-ireland" class="region-link" type="button" title="Zoom to Menlo Castle, Galway, Ireland">
+            Ireland
           </button>
         </div>
       </div>
@@ -187,12 +235,13 @@
       <!-- Era Color Legend -->
       <div class="map-legend-bar" aria-label="Pin Era Legend">
         <span style="font-weight: 700; color: var(--text-primary)">Pin Era:</span>
-        <span class="legend-item"><span class="legend-dot" style="background: var(--era-1800s)"></span>1855–99</span>
+        <span class="legend-item"><span class="legend-dot" style="background: var(--era-1800s)"></span>1850–99</span>
         <span class="legend-item"><span class="legend-dot" style="background: var(--era-1900s)"></span>1900–19</span>
         <span class="legend-item"><span class="legend-dot" style="background: var(--era-1920s)"></span>1920–39</span>
         <span class="legend-item"><span class="legend-dot" style="background: var(--era-1940s)"></span>1940–59</span>
         <span class="legend-item"><span class="legend-dot" style="background: var(--era-1960s)"></span>1960–79</span>
         <span class="legend-item"><span class="legend-dot" style="background: var(--era-1980s)"></span>1980+</span>
+        <span class="legend-item"><span class="legend-dot" style="background: var(--pin-red)"></span>Undated</span>
       </div>
     </section>
   </main>
@@ -209,7 +258,7 @@
       <div class="inspector-main">
         <!-- High-Res Photo Viewer Stage -->
         <div class="inspector-stage">
-          <div id="stage-counter-pill" class="stage-counter-pill">1 / 439</div>
+          <div id="stage-counter-pill" class="stage-counter-pill">1 / 2655</div>
 
           <button
             id="modal-prev-btn"
@@ -246,9 +295,10 @@
 
         <!-- Archival Metadata & Actions -->
         <div class="inspector-details">
-          <div>
+          <div class="inspector-scroll-content">
             <div class="inspector-top-row">
               <div class="inspector-badges">
+                <span id="inspector-album-badge" class="badge-album">Menlo Park</span>
                 <span id="inspector-year-badge" class="badge-year">c. 1885</span>
                 <span id="inspector-catalog-badge" class="badge-catalog">#0033</span>
               </div>
@@ -269,14 +319,30 @@
             <h2 id="inspector-title" class="inspector-title">Photo Title</h2>
             <div id="inspector-notes" class="inspector-notes"></div>
 
+            <!-- Interactive Tags & Subjects from JSON Info Blob -->
+            <div id="inspector-taxonomy" class="inspector-taxonomy" style="display: none;"></div>
+
+            <!-- Rich JSON Info Blob Metadata Panel (Shown when photo has JSON info blob) -->
+            <div id="inspector-json-info-section" class="inspector-json-info-section" style="display: none;">
+              <div class="json-section-header">
+                <span class="json-section-title">Archival Metadata (from Google Photos Info JSON)</span>
+              </div>
+              <div id="inspector-json-fields" class="inspector-json-fields"></div>
+              <details id="inspector-raw-json-details" class="raw-json-details">
+                <summary>View Raw JSON Info Blob</summary>
+                <pre id="inspector-raw-json-pre" class="raw-json-pre"></pre>
+              </details>
+            </div>
+
+            <!-- Core Geolocation & File Metadata Grid -->
             <div class="inspector-meta-grid">
               <div class="meta-box">
                 <div class="meta-label">Latitude, Longitude</div>
                 <div id="inspector-coords" class="meta-value">37.4536, -122.1857</div>
               </div>
               <div class="meta-box">
-                <div class="meta-label">Archive File</div>
-                <div id="inspector-filename" class="meta-value">ph-0033-1983_exif.jpg</div>
+                <div class="meta-label">Location / Coverage</div>
+                <div id="inspector-location-name" class="meta-value">Menlo Park, CA</div>
               </div>
               <div class="meta-box">
                 <div class="meta-label">Dimensions</div>
@@ -286,10 +352,36 @@
                 <div class="meta-label">Photos at Coordinate</div>
                 <div id="inspector-colocated-count" class="meta-value">28 photos</div>
               </div>
+              <div class="meta-box" style="grid-column: 1 / -1;">
+                <div class="meta-label">Archive Filename</div>
+                <div id="inspector-filename" class="meta-value">ph-0033-1983_exif.jpg</div>
+              </div>
             </div>
           </div>
 
           <div class="inspector-actions">
+            <!-- External Archive Links (From JSON Info Blob, shown when present) -->
+            <div id="inspector-archive-links-row" class="action-row" style="display: none;">
+              <a
+                id="inspector-item-page-link"
+                class="btn-archive"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>Archive Catalog Record ↗</span>
+              </a>
+              <a
+                id="inspector-original-scan-link"
+                class="btn-secondary"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span>Original Archive Scan ↗</span>
+              </a>
+            </div>
+
             <div class="action-row">
               <a
                 id="inspector-streetview-link"

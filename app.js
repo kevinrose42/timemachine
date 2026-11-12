@@ -1,29 +1,90 @@
 /**
- * Menlo Park Time Machine — Historical Google Maps Photo Atlas
- * Interactive Map & Photo Viewer Application Logic
+ * Historical Photo Time Machine — Menlo Park & Santa Cruz Google Maps Photo Atlas
+ * Interactive Map, Multi-Album Filter & JSON Info Blob Viewer Application Logic
  */
 
 (function () {
   'use strict';
 
-  const dataset = window.ALBUM_DATA || { photos: [], locations: [] };
+  const dataset = window.ALBUM_DATA || { photos: [], locations: [], albums: [] };
   const allPhotos = dataset.photos || [];
+  const albumBySlug = new Map((dataset.albums || []).map((a) => [a.slug, a]));
+
+  // Hydrate derived URLs and search index on startup
+  allPhotos.forEach((p) => {
+    const alb = albumBySlug.get(p.album) || {};
+    if (!p.album) p.album = 'menlo-park';
+    if (!p.albumTitle) p.albumTitle = alb.title || 'Menlo Park Historical Photo Archive';
+    if (!p.albumShortTitle) p.albumShortTitle = alb.shortTitle || 'Menlo Park';
+    if (!p.albumShortUrl) p.albumShortUrl = alb.shortUrl || 'https://photos.app.goo.gl/jRkKPneBYiDHSSpYA';
+
+    if (p.baseUrl) {
+      if (!p.thumbUrl) p.thumbUrl = `${p.baseUrl}=w360-h270-c`;
+      if (!p.previewUrl) p.previewUrl = `${p.baseUrl}=w800`;
+      if (!p.fullUrl) p.fullUrl = `${p.baseUrl}=w1600`;
+      if (!p.downloadUrl) p.downloadUrl = `${p.baseUrl}=d`;
+    }
+    if (!p.albumPhotoUrl && alb.albumId && alb.albumKey) {
+      p.albumPhotoUrl = `https://photos.google.com/share/${alb.albumId}/photo/${p.id}?key=${alb.albumKey}`;
+    }
+    if (p.lat != null && p.lng != null) {
+      if (!p.googleMapsUrl) {
+        p.googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`;
+      }
+      if (!p.streetViewUrl) {
+        p.streetViewUrl = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lng}`;
+      }
+    }
+
+    // Build searchable text including JSON info blob fields
+    const info = p.info || {};
+    const tagsStr = Array.isArray(info.tags) ? info.tags.join(' ') : '';
+    const subjectsStr = Array.isArray(info.subjects) ? info.subjects.join(' ') : '';
+    p._searchText = [
+      p.title,
+      p.notes,
+      p.catalogId,
+      p.yearLabel,
+      p.filename,
+      p.locationName,
+      p.albumShortTitle,
+      info.coverage,
+      info.creator,
+      info.source,
+      info.collection,
+      info.relation,
+      info.publisher,
+      tagsStr,
+      subjectsStr,
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  });
+
+  const FEED_PAGE_SIZE = 80;
 
   // Application State
   const state = {
-    pinMode: 'all', // 'all' (439 pins) | 'landmark' (83 grouped coordinate pins)
+    selectedAlbum: 'all', // 'all' | 'menlo-park' | 'santa-cruz'
+    pinMode: 'all', // 'all' (individual photo pins) | 'landmark' (grouped coordinate pins)
     mapLayer: 'm', // 'm' (Road), 'y' (Hybrid), 's' (Satellite), 'p' (Terrain)
     selectedEra: 'all',
     searchQuery: '',
     filteredPhotos: [...allPhotos],
+    feedRenderLimit: FEED_PAGE_SIZE,
     selectedPhotoId: null,
-    activeContextList: [], // List of photos currently navigable via Prev/Next in modal
+    activeContextList: [],
     sidebarCollapsed: false,
   };
 
   // DOM Elements
   const dom = {
     headerSummaryText: document.getElementById('header-summary-text'),
+    albumFilterControl: document.getElementById('album-filter-control'),
+    albumAllCount: document.getElementById('album-all-count'),
+    albumMpCount: document.getElementById('album-mp-count'),
+    albumScCount: document.getElementById('album-sc-count'),
     allPinsCount: document.getElementById('all-pins-count'),
     landmarkPinsCount: document.getElementById('landmark-pins-count'),
     modeAllPinsBtn: document.getElementById('mode-all-pins-btn'),
@@ -37,6 +98,8 @@
     eraPills: document.getElementById('era-pills'),
     visiblePhotoCount: document.getElementById('visible-photo-count'),
     jumpMenloPark: document.getElementById('jump-menlo-park'),
+    jumpSantaCruz: document.getElementById('jump-santa-cruz'),
+    jumpBoulderCreek: document.getElementById('jump-boulder-creek'),
     jumpIreland: document.getElementById('jump-ireland'),
     photoFeed: document.getElementById('photo-feed'),
     layerBtns: document.querySelectorAll('.gmaps-layer-btn'),
@@ -48,14 +111,24 @@
     modalNextBtn: document.getElementById('modal-next-btn'),
     stageCounterPill: document.getElementById('stage-counter-pill'),
     inspectorImg: document.getElementById('inspector-img'),
+    inspectorAlbumBadge: document.getElementById('inspector-album-badge'),
     inspectorYearBadge: document.getElementById('inspector-year-badge'),
     inspectorCatalogBadge: document.getElementById('inspector-catalog-badge'),
     inspectorTitle: document.getElementById('inspector-title'),
     inspectorNotes: document.getElementById('inspector-notes'),
+    inspectorTaxonomy: document.getElementById('inspector-taxonomy'),
+    inspectorJsonInfoSection: document.getElementById('inspector-json-info-section'),
+    inspectorJsonFields: document.getElementById('inspector-json-fields'),
+    inspectorRawJsonDetails: document.getElementById('inspector-raw-json-details'),
+    inspectorRawJsonPre: document.getElementById('inspector-raw-json-pre'),
     inspectorCoords: document.getElementById('inspector-coords'),
+    inspectorLocationName: document.getElementById('inspector-location-name'),
     inspectorFilename: document.getElementById('inspector-filename'),
     inspectorDimensions: document.getElementById('inspector-dimensions'),
     inspectorColocatedCount: document.getElementById('inspector-colocated-count'),
+    inspectorArchiveLinksRow: document.getElementById('inspector-archive-links-row'),
+    inspectorItemPageLink: document.getElementById('inspector-item-page-link'),
+    inspectorOriginalScanLink: document.getElementById('inspector-original-scan-link'),
     inspectorStreetViewLink: document.getElementById('inspector-streetview-link'),
     inspectorGmapsLink: document.getElementById('inspector-gmaps-link'),
     inspectorGphotosLink: document.getElementById('inspector-gphotos-link'),
@@ -71,6 +144,7 @@
   let markersLayerGroup = null;
   let leaderLineLayer = null;
   const markerByPhotoId = new Map();
+  let feedObserver = null;
 
   // Era bucket helper
   function getEraKey(year) {
@@ -121,7 +195,7 @@
             stroke="${strokeColor}"
             stroke-width="2"
           />
-          <circle cx="14" cy="14" r="4.8" fill="#ffffff" />
+          <circle cx="14" cy="13.5" r="4.8" fill="#ffffff" />
         </svg>
         ${badgeHtml}
       </div>
@@ -136,51 +210,51 @@
     });
   }
 
-  // Build Rich Hover Tooltip Content
+  // Build Hover Tooltip Preview Card
   function createTooltipHtml(photo, clusterCount) {
-    const countText =
-      clusterCount && clusterCount > 1
-        ? `${clusterCount} photos at this spot`
-        : photo.catalogId
-        ? `#${photo.catalogId}`
+    const countLabel =
+      clusterCount && clusterCount > 1 ? `${clusterCount} photos here` : photo.albumShortTitle || '';
+    const codeLabel = photo.catalogId ? `#${escapeHtml(photo.catalogId)}` : '';
+    const rightMeta = countLabel || codeLabel;
+    const coverageLine =
+      photo.info && photo.info.coverage
+        ? `<div style="font-size: 0.68rem; color: var(--text-secondary);">${escapeHtml(photo.info.coverage)}</div>`
         : '';
+
     return `
       <div class="pin-tooltip-card">
         <img class="pin-tooltip-img" src="${photo.thumbUrl}" alt="${escapeHtml(photo.title)}" loading="lazy" />
         <div class="pin-tooltip-meta">
-          <span>${escapeHtml(photo.yearLabel || 'Historical')}</span>
-          <span>${escapeHtml(countText)}</span>
+          <span>${escapeHtml(photo.yearLabel)}</span>
+          <span>${escapeHtml(rightMeta)}</span>
         </div>
         <div class="pin-tooltip-title">${escapeHtml(photo.title)}</div>
-        <div class="pin-tooltip-hint">Click pin to view photo</div>
+        ${coverageLine}
+        <div class="pin-tooltip-hint">Click pin to view photo &amp; info</div>
       </div>
     `;
   }
 
-  function escapeHtml(str) {
-    return String(str || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  // Initialize Leaflet Map with Google Maps Tiles
+  // Initialize Leaflet Map with Official Google Maps Tiles
   function initMap() {
+    // Center initially to show the Bay Area & Santa Cruz Peninsula
     map = L.map('map', {
-      center: [37.4529, -122.1842],
-      zoom: 15,
+      center: [37.21, -122.11],
+      zoom: 10,
       zoomControl: false,
-      maxZoom: 21,
-      minZoom: 3,
+      preferCanvas: false,
     });
 
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    L.control
+      .zoom({
+        position: 'bottomright',
+      })
+      .addTo(map);
 
     setGoogleTileLayer(state.mapLayer);
 
-    markersLayerGroup = L.layerGroup().addTo(map);
     leaderLineLayer = L.layerGroup().addTo(map);
+    markersLayerGroup = L.layerGroup().addTo(map);
   }
 
   function setGoogleTileLayer(lyrsCode) {
@@ -193,7 +267,7 @@
       {
         subdomains: ['0', '1', '2', '3'],
         maxZoom: 21,
-        attribution: '&copy; Google Maps · Menlo Park Historical Photo Archive',
+        attribution: '&copy; Google Maps · Menlo Park &amp; Santa Cruz Historical Archives',
       }
     ).addTo(map);
 
@@ -202,23 +276,26 @@
     });
   }
 
-  // Filter Photos based on Search Query & Era Selection
+  // Filter Photos based on Album, Search Query & Era Selection
   function applyFilters() {
     const q = state.searchQuery.trim().toLowerCase();
     const era = state.selectedEra;
+    const album = state.selectedAlbum;
 
     state.filteredPhotos = allPhotos.filter((p) => {
+      if (album !== 'all' && p.album !== album) {
+        return false;
+      }
       if (era !== 'all' && getEraKey(p.year) !== era) {
         return false;
       }
-      if (q) {
-        const haystack = `${p.title} ${p.notes} ${p.catalogId || ''} ${p.yearLabel || ''} ${p.filename || ''}`.toLowerCase();
-        if (!haystack.includes(q)) {
-          return false;
-        }
+      if (q && !p._searchText.includes(q)) {
+        return false;
       }
       return true;
     });
+
+    state.feedRenderLimit = FEED_PAGE_SIZE;
 
     // Count unique locations in filtered set
     const uniqueLocs = new Set(state.filteredPhotos.map((p) => `${p.lat},${p.lng}`));
@@ -237,7 +314,6 @@
     markerByPhotoId.clear();
 
     if (state.pinMode === 'all') {
-      // Drop 1 pin for each individual geolocated photo
       state.filteredPhotos.forEach((photo) => {
         const isSelected = photo.id === state.selectedPhotoId;
         const lat = photo.displayLat || photo.lat;
@@ -255,7 +331,6 @@
         });
 
         marker.on('click', () => {
-          // When clicking a pin, show the photo immediately and populate its co-located group
           const colocated = state.filteredPhotos.filter(
             (p) => p.lat === photo.lat && p.lng === photo.lng
           );
@@ -276,7 +351,7 @@
         markerByPhotoId.set(photo.id, marker);
       });
     } else {
-      // Group co-located photos by exact GPS coordinate (83 landmarks)
+      // Group co-located photos by exact GPS coordinate
       const groups = new Map();
       state.filteredPhotos.forEach((photo) => {
         const key = `${photo.lat},${photo.lng}`;
@@ -343,9 +418,19 @@
     }
   }
 
-  // Render Left Sidebar Photo Feed
-  function renderPhotoFeed() {
-    dom.photoFeed.innerHTML = '';
+  // Render Left Sidebar Photo Feed (Paginated for instant rendering across 2,655 photos)
+  function renderPhotoFeed(appendOnly = false) {
+    if (feedObserver) {
+      feedObserver.disconnect();
+      feedObserver = null;
+    }
+
+    if (!appendOnly) {
+      dom.photoFeed.innerHTML = '';
+    } else {
+      const oldBtn = dom.photoFeed.querySelector('.feed-load-more-btn');
+      if (oldBtn) oldBtn.remove();
+    }
 
     if (state.filteredPhotos.length === 0) {
       dom.photoFeed.innerHTML = `
@@ -356,9 +441,15 @@
       return;
     }
 
+    const startIdx = appendOnly
+      ? Math.max(0, state.feedRenderLimit - FEED_PAGE_SIZE)
+      : 0;
+    const endIdx = Math.min(state.feedRenderLimit, state.filteredPhotos.length);
+    const slice = state.filteredPhotos.slice(startIdx, endIdx);
+
     const fragment = document.createDocumentFragment();
 
-    state.filteredPhotos.forEach((photo) => {
+    slice.forEach((photo) => {
       const card = document.createElement('article');
       card.className = `photo-card ${photo.id === state.selectedPhotoId ? 'selected' : ''}`;
       card.dataset.photoId = photo.id;
@@ -368,7 +459,10 @@
       const colocatedBadge =
         colocatedCount > 1
           ? `<span class="colocated-tag" title="${colocatedCount} photos share this exact GPS coordinate">${colocatedCount} at spot</span>`
-          : `<span>${photo.lat.toFixed(4)}, ${photo.lng.toFixed(4)}</span>`;
+          : `<span>${escapeHtml(photo.locationName || `${photo.lat.toFixed(4)}, ${photo.lng.toFixed(4)}`)}</span>`;
+
+      const albumBadgeClass = photo.album === 'santa-cruz' ? 'santa-cruz' : '';
+      const albumBadgeLabel = photo.album === 'santa-cruz' ? 'SCPL' : 'MP';
 
       card.innerHTML = `
         <div class="photo-card-thumb-wrap">
@@ -378,6 +472,7 @@
             alt="${escapeHtml(photo.title)}"
             loading="lazy"
           />
+          <span class="photo-card-album-badge ${albumBadgeClass}">${albumBadgeLabel}</span>
           <span class="photo-card-year-badge">${escapeHtml(photo.yearLabel)}</span>
         </div>
         <div class="photo-card-body">
@@ -415,6 +510,36 @@
       fragment.appendChild(card);
     });
 
+    if (endIdx < state.filteredPhotos.length) {
+      const remaining = state.filteredPhotos.length - endIdx;
+      const loadMoreBtn = document.createElement('button');
+      loadMoreBtn.type = 'button';
+      loadMoreBtn.className = 'feed-load-more-btn';
+      loadMoreBtn.textContent = `Show More Photos (${remaining} remaining)`;
+      loadMoreBtn.addEventListener('click', () => {
+        state.feedRenderLimit += FEED_PAGE_SIZE;
+        renderPhotoFeed(true);
+      });
+      fragment.appendChild(loadMoreBtn);
+
+      if ('IntersectionObserver' in window) {
+        feedObserver = new IntersectionObserver(
+          (entries) => {
+            if (entries.some((e) => e.isIntersecting)) {
+              state.feedRenderLimit += FEED_PAGE_SIZE;
+              renderPhotoFeed(true);
+            }
+          },
+          { root: dom.photoFeed, rootMargin: '240px' }
+        );
+        setTimeout(() => {
+          if (feedObserver && loadMoreBtn.isConnected) {
+            feedObserver.observe(loadMoreBtn);
+          }
+        }, 50);
+      }
+    }
+
     dom.photoFeed.appendChild(fragment);
   }
 
@@ -437,7 +562,7 @@
   function focusPhotoOnMapAndOpen(photo) {
     const targetLat = state.pinMode === 'all' ? photo.displayLat || photo.lat : photo.lat;
     const targetLng = state.pinMode === 'all' ? photo.displayLng || photo.lng : photo.lng;
-    const targetZoom = Math.max(map.getZoom(), 17);
+    const targetZoom = Math.max(map.getZoom(), 16);
 
     map.flyTo([targetLat, targetLng], targetZoom, {
       duration: 0.65,
@@ -449,41 +574,222 @@
     openPhotoModal(photo, colocated.length > 1 ? colocated : state.filteredPhotos);
   }
 
-  // Open Photo Inspector Lightbox when clicking a pin or photo card
+  // Render JSON Info Blob Metadata inside Modal
+  function renderJsonInfoPanel(photo) {
+    const info = photo.info;
+    if (!info || typeof info !== 'object') {
+      dom.inspectorTaxonomy.style.display = 'none';
+      dom.inspectorTaxonomy.innerHTML = '';
+      dom.inspectorJsonInfoSection.style.display = 'none';
+      dom.inspectorJsonFields.innerHTML = '';
+      dom.inspectorArchiveLinksRow.style.display = 'none';
+      return;
+    }
+
+    // 1. Render Interactive Tags & Subjects Chips
+    const tags = Array.isArray(info.tags) ? info.tags.filter(Boolean) : [];
+    const subjects = Array.isArray(info.subjects) ? info.subjects.filter(Boolean) : [];
+
+    if (tags.length > 0 || subjects.length > 0) {
+      dom.inspectorTaxonomy.style.display = 'flex';
+      dom.inspectorTaxonomy.innerHTML = '';
+
+      if (tags.length > 0) {
+        const group = document.createElement('div');
+        group.className = 'tax-group';
+        group.innerHTML = `<span class="tax-label">Tags:</span>`;
+        tags.forEach((tag) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tax-chip';
+          btn.title = `Filter map to tag "${tag}"`;
+          btn.textContent = tag;
+          btn.addEventListener('click', () => {
+            filterByTermFromModal(tag);
+          });
+          group.appendChild(btn);
+        });
+        dom.inspectorTaxonomy.appendChild(group);
+      }
+
+      if (subjects.length > 0) {
+        const group = document.createElement('div');
+        group.className = 'tax-group';
+        group.innerHTML = `<span class="tax-label">Subjects:</span>`;
+        subjects.forEach((subj) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tax-chip';
+          btn.title = `Filter map to subject "${subj}"`;
+          btn.textContent = subj;
+          btn.addEventListener('click', () => {
+            filterByTermFromModal(subj);
+          });
+          group.appendChild(btn);
+        });
+        dom.inspectorTaxonomy.appendChild(group);
+      }
+    } else {
+      dom.inspectorTaxonomy.style.display = 'none';
+      dom.inspectorTaxonomy.innerHTML = '';
+    }
+
+    // 2. Render Structured JSON Fields
+    const fieldDefinitions = [
+      { key: 'identifier', label: 'Identifier' },
+      { key: 'date', label: 'Date' },
+      { key: 'coverage', label: 'Coverage / Place' },
+      { key: 'creator', label: 'Creator' },
+      { key: 'source', label: 'Source / Donor' },
+      { key: 'collection', label: 'Collection' },
+      { key: 'publisher', label: 'Publisher' },
+      { key: 'relation', label: 'Relation' },
+      { key: 'type', label: 'Record Type' },
+      { key: 'item_type', label: 'Item Type' },
+      { key: 'original_format', label: 'Original Format' },
+      { key: 'format', label: 'Format' },
+      { key: 'physical_dimensions', label: 'Physical Size' },
+      {
+        key: 'dimensions',
+        label: 'Scan Dimensions',
+        format: (val) =>
+          val && typeof val === 'object'
+            ? val.display || `${val.width || '?'} × ${val.height || '?'}`
+            : String(val),
+      },
+      { key: 'item_id', label: 'Catalog Item ID' },
+      { key: 'page', label: 'Catalog Page' },
+      {
+        key: 'file_index',
+        label: 'File Index',
+        format: (val, obj) => (obj.file_count ? `${val} of ${obj.file_count}` : String(val)),
+      },
+      { key: 'language', label: 'Language' },
+      { key: 'rights', label: 'Rights / Usage' },
+      { key: 'citation', label: 'Citation' },
+      {
+        key: 'item_page_url',
+        label: 'Catalog URL',
+        isUrl: true,
+      },
+      {
+        key: 'original_image_url',
+        label: 'Original Image',
+        isUrl: true,
+      },
+    ];
+
+    const handledKeys = new Set([
+      'title',
+      'description',
+      'tags',
+      'subjects',
+      'file_count',
+      'square_thumbnail_url',
+      ...fieldDefinitions.map((f) => f.key),
+    ]);
+
+    const rowsHtml = [];
+    fieldDefinitions.forEach((def) => {
+      const rawVal = info[def.key];
+      if (rawVal === undefined || rawVal === null || rawVal === '') return;
+      const displayVal = def.format ? def.format(rawVal, info) : String(rawVal);
+      if (!displayVal) return;
+
+      const valueHtml = def.isUrl
+        ? `<a href="${escapeHtml(displayVal)}" target="_blank" rel="noopener noreferrer">${escapeHtml(displayVal)} ↗</a>`
+        : escapeHtml(displayVal);
+
+      rowsHtml.push(`
+        <div class="json-field-row">
+          <div class="json-field-key">${escapeHtml(def.label)}</div>
+          <div class="json-field-val">${valueHtml}</div>
+        </div>
+      `);
+    });
+
+    // Include any additional custom keys from the JSON blob
+    Object.keys(info).forEach((k) => {
+      if (handledKeys.has(k)) return;
+      const val = info[k];
+      if (val === undefined || val === null || val === '') return;
+      const strVal = typeof val === 'object' ? JSON.stringify(val) : String(val);
+      rowsHtml.push(`
+        <div class="json-field-row">
+          <div class="json-field-key">${escapeHtml(k)}</div>
+          <div class="json-field-val">${escapeHtml(strVal)}</div>
+        </div>
+      `);
+    });
+
+    dom.inspectorJsonFields.innerHTML = rowsHtml.join('');
+    dom.inspectorRawJsonDetails.open = false;
+    dom.inspectorRawJsonPre.textContent = JSON.stringify(info, null, 2);
+    dom.inspectorJsonInfoSection.style.display = 'block';
+
+    // 3. External Archive Action Buttons (item_page_url & original_image_url)
+    if (info.item_page_url || info.original_image_url) {
+      dom.inspectorArchiveLinksRow.style.display = 'grid';
+      if (info.item_page_url) {
+        dom.inspectorItemPageLink.href = info.item_page_url;
+        dom.inspectorItemPageLink.style.display = 'inline-flex';
+      } else {
+        dom.inspectorItemPageLink.style.display = 'none';
+      }
+      if (info.original_image_url) {
+        dom.inspectorOriginalScanLink.href = info.original_image_url;
+        dom.inspectorOriginalScanLink.style.display = 'inline-flex';
+      } else {
+        dom.inspectorOriginalScanLink.style.display = 'none';
+      }
+    } else {
+      dom.inspectorArchiveLinksRow.style.display = 'none';
+    }
+  }
+
+  function filterByTermFromModal(term) {
+    closePhotoModal();
+    state.searchQuery = term;
+    dom.searchInput.value = term;
+    dom.clearSearchBtn.classList.add('visible');
+    applyFilters();
+  }
+
+  // Open Photo Lightbox / Detail Inspector Modal
   function openPhotoModal(photo, contextList) {
     state.selectedPhotoId = photo.id;
     state.activeContextList =
       contextList && contextList.length > 0 ? contextList : state.filteredPhotos;
 
-    // Update selected state in sidebar cards and map pins
-    document.querySelectorAll('.photo-card').forEach((card) => {
-      card.classList.toggle('selected', card.dataset.photoId === photo.id);
-    });
-    renderMapPins();
-    drawLeaderLine(photo);
-
-    // Populate modal fields
     const currentIndex = state.activeContextList.findIndex((p) => p.id === photo.id);
     const totalInContext = state.activeContextList.length;
 
-    dom.stageCounterPill.textContent = `${currentIndex + 1} / ${totalInContext}`;
+    dom.stageCounterPill.textContent = `${currentIndex >= 0 ? currentIndex + 1 : 1} / ${totalInContext}`;
 
-    // Show preview immediately, then upgrade to high-res
+    // Load preview image immediately, then upgrade to high-res
     dom.inspectorImg.classList.remove('zoomed');
-    dom.inspectorImg.src = photo.previewUrl;
+    dom.inspectorImg.src = photo.previewUrl || photo.fullUrl;
     dom.inspectorImg.alt = photo.title;
-    const fullImg = new Image();
-    fullImg.onload = () => {
+
+    const hiRes = new Image();
+    hiRes.onload = () => {
       if (state.selectedPhotoId === photo.id) {
         dom.inspectorImg.src = photo.fullUrl;
       }
     };
-    fullImg.src = photo.fullUrl;
+    hiRes.src = photo.fullUrl;
 
-    dom.inspectorYearBadge.textContent = photo.yearLabel || 'Historical';
+    // Album Badge
+    if (dom.inspectorAlbumBadge) {
+      dom.inspectorAlbumBadge.textContent = photo.albumShortTitle || 'Archive';
+      dom.inspectorAlbumBadge.classList.toggle('santa-cruz', photo.album === 'santa-cruz');
+    }
+
+    // Year & Catalog Badges
+    dom.inspectorYearBadge.textContent = photo.yearLabel;
     if (photo.catalogId) {
-      dom.inspectorCatalogBadge.style.display = 'inline-block';
-      dom.inspectorCatalogBadge.textContent = `Archive #${photo.catalogId}`;
+      dom.inspectorCatalogBadge.textContent = `#${photo.catalogId}`;
+      dom.inspectorCatalogBadge.style.display = 'inline-flex';
     } else {
       dom.inspectorCatalogBadge.style.display = 'none';
     }
@@ -491,60 +797,82 @@
     dom.inspectorTitle.textContent = photo.title;
 
     if (photo.notes) {
-      dom.inspectorNotes.style.display = 'block';
       dom.inspectorNotes.textContent = photo.notes;
+      dom.inspectorNotes.style.display = 'block';
     } else {
       dom.inspectorNotes.style.display = 'none';
     }
 
+    // Render JSON Info Blob section if present
+    renderJsonInfoPanel(photo);
+
     dom.inspectorCoords.textContent = `${photo.lat.toFixed(6)}, ${photo.lng.toFixed(6)}`;
-    dom.inspectorFilename.textContent = photo.filename || 'N/A';
-    dom.inspectorDimensions.textContent = `${photo.width} × ${photo.height} px`;
+    if (dom.inspectorLocationName) {
+      dom.inspectorLocationName.textContent =
+        (photo.info && photo.info.coverage) || photo.locationName || 'California';
+    }
+    dom.inspectorFilename.textContent = photo.filename || 'Archival Scan';
+    dom.inspectorDimensions.textContent =
+      photo.info && photo.info.dimensions && photo.info.dimensions.display
+        ? `${photo.info.dimensions.display} px`
+        : photo.width && photo.height
+          ? `${photo.width} × ${photo.height} px`
+          : 'Original Scan';
 
-    // All photos sharing this exact GPS coordinate
-    const sameSpotPhotos = allPhotos.filter(
-      (p) => p.lat === photo.lat && p.lng === photo.lng
-    );
+    // All photos at this exact coordinate
+    const colocated = allPhotos.filter((p) => p.lat === photo.lat && p.lng === photo.lng);
     dom.inspectorColocatedCount.textContent =
-      sameSpotPhotos.length === 1
+      colocated.length === 1
         ? '1 photo at this spot'
-        : `${sameSpotPhotos.length} photos at this spot`;
+        : `${colocated.length} photos at this spot`;
 
+    // External Action Links
     dom.inspectorStreetViewLink.href = photo.streetViewUrl;
     dom.inspectorGmapsLink.href = photo.googleMapsUrl;
-    dom.inspectorGphotosLink.href = photo.albumPhotoUrl;
-    dom.inspectorDownloadLink.href = photo.fullUrl;
+    dom.inspectorGphotosLink.href = photo.albumPhotoUrl || photo.albumShortUrl;
+    dom.inspectorDownloadLink.href =
+      (photo.info && photo.info.original_image_url) || photo.downloadUrl || photo.fullUrl;
 
-    // Populate bottom filmstrip for co-located photos (or active context)
-    const filmstripPhotos = sameSpotPhotos.length > 1 ? sameSpotPhotos : state.activeContextList;
-    dom.filmstripLabel.textContent =
-      sameSpotPhotos.length > 1
-        ? `At this exact location (${sameSpotPhotos.length}):`
-        : `Browse photos (${filmstripPhotos.length}):`;
+    // Render Co-Located Filmstrip if multiple photos share this coordinate
+    renderModalFilmstrip(photo, colocated);
 
-    dom.filmstripTrack.innerHTML = '';
-    filmstripPhotos.slice(0, 60).forEach((item) => {
-      const thumbBtn = document.createElement('button');
-      thumbBtn.type = 'button';
-      thumbBtn.className = `filmstrip-item ${item.id === photo.id ? 'active' : ''}`;
-      thumbBtn.title = `${item.yearLabel} — ${item.title}`;
-      thumbBtn.innerHTML = `
-        <img src="${item.thumbUrl}" alt="${escapeHtml(item.title)}" loading="lazy" />
-        <span class="filmstrip-year">${escapeHtml(String(item.year || ''))}</span>
-      `;
-      thumbBtn.addEventListener('click', () => {
-        openPhotoModal(item, filmstripPhotos);
-      });
-      dom.filmstripTrack.appendChild(thumbBtn);
-    });
-
+    // Show Modal
     dom.modalBackdrop.classList.add('open');
 
-    // Scroll active filmstrip thumbnail into view
-    const activeThumb = dom.filmstripTrack.querySelector('.filmstrip-item.active');
-    if (activeThumb) {
-      activeThumb.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-    }
+    // Update active state on sidebar & pins
+    updateSelectedVisualState(photo);
+  }
+
+  function renderModalFilmstrip(activePhoto, colocatedList) {
+    dom.filmstripTrack.innerHTML = '';
+
+    const listToShow = colocatedList.length > 1 ? colocatedList : state.activeContextList.slice(0, 40);
+    dom.filmstripLabel.textContent =
+      colocatedList.length > 1
+        ? `At this exact location (${colocatedList.length}):`
+        : `Nearby in list (${listToShow.length}):`;
+
+    listToShow.forEach((p) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `filmstrip-item ${p.id === activePhoto.id ? 'active' : ''}`;
+      item.title = `${p.title} (${p.yearLabel})`;
+      item.innerHTML = `
+        <img src="${p.thumbUrl}" alt="${escapeHtml(p.title)}" loading="lazy" />
+        <span class="filmstrip-year">${escapeHtml(String(p.year || p.yearLabel).slice(0, 6))}</span>
+      `;
+      item.addEventListener('click', () => {
+        openPhotoModal(p, listToShow);
+      });
+      dom.filmstripTrack.appendChild(item);
+    });
+
+    requestAnimationFrame(() => {
+      const activeThumb = dom.filmstripTrack.querySelector('.filmstrip-item.active');
+      if (activeThumb) {
+        activeThumb.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+    });
   }
 
   function closePhotoModal() {
@@ -553,14 +881,12 @@
   }
 
   function stepModalPhoto(delta) {
-    if (!state.modalOpen && !dom.modalBackdrop.classList.contains('open')) return;
-    const list = state.activeContextList;
-    if (!list || list.length === 0) return;
-    const idx = list.findIndex((p) => p.id === state.selectedPhotoId);
-    const nextIdx = (idx + delta + list.length) % list.length;
-    const nextPhoto = list[nextIdx];
+    if (!state.activeContextList.length || !state.selectedPhotoId) return;
+    const idx = state.activeContextList.findIndex((p) => p.id === state.selectedPhotoId);
+    const nextIdx = (idx + delta + state.activeContextList.length) % state.activeContextList.length;
+    const nextPhoto = state.activeContextList[nextIdx];
     if (nextPhoto) {
-      openPhotoModal(nextPhoto, list);
+      openPhotoModal(nextPhoto, state.activeContextList);
       const targetLat =
         state.pinMode === 'all' ? nextPhoto.displayLat || nextPhoto.lat : nextPhoto.lat;
       const targetLng =
@@ -569,9 +895,59 @@
     }
   }
 
-  // Bind UI Events
+  function updateSelectedVisualState(photo) {
+    dom.photoFeed.querySelectorAll('.photo-card').forEach((card) => {
+      const isMatch = card.dataset.photoId === photo.id;
+      card.classList.toggle('selected', isMatch);
+      if (isMatch) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+
+    document.querySelectorAll('.gmap-pin').forEach((pinEl) => {
+      pinEl.classList.toggle('selected', pinEl.dataset.photoId === photo.id);
+    });
+
+    drawLeaderLine(photo);
+  }
+
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // Event Listeners
   function bindEvents() {
-    // Pin Mode Switcher (All 439 Photo Pins vs 83 Landmark Clusters)
+    // Album Filter Segmented Control
+    if (dom.albumFilterControl) {
+      dom.albumFilterControl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.seg-btn');
+        if (!btn || !btn.dataset.album) return;
+        const albumSlug = btn.dataset.album;
+        if (state.selectedAlbum === albumSlug) return;
+
+        state.selectedAlbum = albumSlug;
+        dom.albumFilterControl.querySelectorAll('.seg-btn').forEach((b) => {
+          b.classList.toggle('active', b === btn);
+        });
+
+        applyFilters();
+
+        if (albumSlug === 'menlo-park') {
+          map.flyTo([37.4529, -122.1842], 15, { duration: 0.85 });
+        } else if (albumSlug === 'santa-cruz') {
+          map.flyTo([37.015, -122.055], 11, { duration: 0.85 });
+        } else {
+          map.flyTo([37.21, -122.11], 10, { duration: 0.85 });
+        }
+      });
+    }
+
+    // Pin Mode Switcher
     dom.modeAllPinsBtn.addEventListener('click', () => {
       if (state.pinMode === 'all') return;
       state.pinMode = 'all';
@@ -632,13 +1008,29 @@
     });
 
     // Region Quick Jumps
-    dom.jumpMenloPark.addEventListener('click', () => {
-      map.flyTo([37.4529, -122.1842], 15, { duration: 0.8 });
-    });
+    if (dom.jumpMenloPark) {
+      dom.jumpMenloPark.addEventListener('click', () => {
+        map.flyTo([37.4529, -122.1842], 15, { duration: 0.8 });
+      });
+    }
 
-    dom.jumpIreland.addEventListener('click', () => {
-      map.flyTo([53.3043, -9.0729194], 16, { duration: 0.9 });
-    });
+    if (dom.jumpSantaCruz) {
+      dom.jumpSantaCruz.addEventListener('click', () => {
+        map.flyTo([36.9741, -122.0308], 14, { duration: 0.8 });
+      });
+    }
+
+    if (dom.jumpBoulderCreek) {
+      dom.jumpBoulderCreek.addEventListener('click', () => {
+        map.flyTo([37.1261, -122.1222], 14, { duration: 0.8 });
+      });
+    }
+
+    if (dom.jumpIreland) {
+      dom.jumpIreland.addEventListener('click', () => {
+        map.flyTo([53.3043, -9.0729194], 16, { duration: 0.9 });
+      });
+    }
 
     // Google Maps Layer Switcher
     dom.layerBtns.forEach((btn) => {
@@ -677,9 +1069,16 @@
 
   // Bootstrap Application
   function init() {
+    const mpCount = allPhotos.filter((p) => p.album === 'menlo-park').length;
+    const scCount = allPhotos.filter((p) => p.album === 'santa-cruz').length;
+
     if (dom.headerSummaryText && allPhotos.length > 0) {
-      dom.headerSummaryText.textContent = `${allPhotos.length} Geolocated Photos · 1855–2013`;
+      dom.headerSummaryText.textContent = `${allPhotos.length.toLocaleString()} Geolocated Photos · Menlo Park & Santa Cruz`;
     }
+    if (dom.albumAllCount) dom.albumAllCount.textContent = allPhotos.length;
+    if (dom.albumMpCount) dom.albumMpCount.textContent = mpCount;
+    if (dom.albumScCount) dom.albumScCount.textContent = scCount;
+
     initMap();
     bindEvents();
     applyFilters();
