@@ -677,6 +677,9 @@
 
   // Bootstrap Application
   function init() {
+    if (dom.headerSummaryText && allPhotos.length > 0) {
+      dom.headerSummaryText.textContent = `${allPhotos.length} Geolocated Photos · 1855–2013`;
+    }
     initMap();
     bindEvents();
     applyFilters();

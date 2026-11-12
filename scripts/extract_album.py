@@ -102,68 +102,68 @@ def parse_year_and_caption(caption: str, filename: str, ts_ms: int, tz_offset_ms
     return catalog_id, title, notes, year, year_label, decade
 
 
-def build_dataset(raw_path="/tmp/all_photos_raw.json"):
-    if os.path.exists(raw_path):
-        print(f"Loading cached raw response from {raw_path}...")
-        with open(raw_path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        unique_items = raw["items"]
-        info_map = raw["info"]
-        album_id = "AF1QipMEoTr2oVsbVUjROrsP7ZdhQpt1XPt4s0HPOUYLzcZsj8L0Rxtz9_HVzp8zm03bJw"
-        album_key = "TVFOY1FOY3h5LWE0Z0cxdXpRRG5UZGhpeEVVQmlR"
-    else:
-        print(f"Fetching {SHORT_URL}...")
-        html = fetch_album_html(SHORT_URL)
-        matches = re.findall(r"AF_initDataCallback\((\{.*?\})\);</script>", html, re.DOTALL)
-        b1 = matches[1]
-        data_str = re.search(r"data:(\[.*\]), sideChannel:", b1, re.DOTALL).group(1)
-        data = json.loads(data_str)
+def build_dataset():
+    print(f"Fetching {SHORT_URL}...")
+    req = urllib.request.Request(SHORT_URL, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req) as resp:
+        final_url = resp.geturl()
+        html = resp.read().decode("utf-8")
 
-        all_items = list(data[1])
-        next_token = data[2]
-        album_id = data[3][0]
-        album_key = data[3][21]
+    parsed_url = urllib.parse.urlparse(final_url)
+    url_qs = urllib.parse.parse_qs(parsed_url.query)
+    url_key = url_qs.get("key", [None])[0]
 
-        while next_token:
-            text = call_batchexecute(
-                [["snAcKc", json.dumps([album_id, next_token, None, album_key]), None, "generic"]]
-            )
-            next_token = None
-            for line in text.splitlines():
-                if line.startswith('[["wrb.fr"'):
-                    arr = json.loads(line)
-                    for entry in arr:
-                        if entry[0] == "wrb.fr" and entry[2]:
-                            parsed = json.loads(entry[2])
-                            all_items.extend(parsed[1] or [])
-                            next_token = parsed[2]
-                            break
+    matches = re.findall(r"AF_initDataCallback\((\{.*?\})\);</script>", html, re.DOTALL)
+    b1 = matches[1]
+    data_str = re.search(r"data:(\[.*\]), sideChannel:", b1, re.DOTALL).group(1)
+    data = json.loads(data_str)
 
-        seen = set()
-        unique_items = []
-        for item in all_items:
-            if item[0] not in seen:
-                seen.add(item[0])
-                unique_items.append(item)
+    all_items = list(data[1])
+    next_token = data[2]
+    album_id = data[3][0]
+    album_key = data[3][19] if (len(data[3]) > 19 and data[3][19]) else url_key
 
-        info_map = {}
-        batch_size = 50
-        for start in range(0, len(unique_items), batch_size):
-            batch = unique_items[start : start + batch_size]
-            calls = [
-                ["fDcn4b", json.dumps([item[0], 1, album_key]), None, str(start + i)]
-                for i, item in enumerate(batch)
-            ]
-            text = call_batchexecute(calls)
-            for line in text.splitlines():
-                if line.startswith('[["wrb.fr"'):
-                    arr = json.loads(line)
-                    for entry in arr:
-                        if entry[0] == "wrb.fr" and entry[2]:
-                            parsed = json.loads(entry[2])
-                            if parsed and parsed[0]:
-                                pinfo = parsed[0]
-                                info_map[pinfo[0]] = pinfo
+    while next_token:
+        text = call_batchexecute(
+            [["snAcKc", json.dumps([album_id, next_token, None, album_key]), None, "generic"]]
+        )
+        next_token = None
+        for line in text.splitlines():
+            if line.startswith('[["wrb.fr"'):
+                arr = json.loads(line)
+                for entry in arr:
+                    if entry[0] == "wrb.fr" and entry[2]:
+                        parsed = json.loads(entry[2])
+                        all_items.extend(parsed[1] or [])
+                        next_token = parsed[2]
+                        break
+
+    seen = set()
+    unique_items = []
+    for item in all_items:
+        if item[0] not in seen:
+            seen.add(item[0])
+            unique_items.append(item)
+
+    print(f"Found {len(unique_items)} photos in album. Fetching per-photo geolocation metadata...")
+    info_map = {}
+    batch_size = 50
+    for start in range(0, len(unique_items), batch_size):
+        batch = unique_items[start : start + batch_size]
+        calls = [
+            ["fDcn4b", json.dumps([item[0], 1, album_key]), None, str(start + i)]
+            for i, item in enumerate(batch)
+        ]
+        text = call_batchexecute(calls)
+        for line in text.splitlines():
+            if line.startswith('[["wrb.fr"'):
+                arr = json.loads(line)
+                for entry in arr:
+                    if entry[0] == "wrb.fr" and entry[2]:
+                        parsed = json.loads(entry[2])
+                        if parsed and parsed[0]:
+                            pinfo = parsed[0]
+                            info_map[pinfo[0]] = pinfo
 
     geolocated_photos = []
     unmapped_photos = []
@@ -276,6 +276,12 @@ def build_dataset(raw_path="/tmp/all_photos_raw.json"):
         )
 
     geolocated_photos.sort(key=lambda p: (p["year"] or 9999, p["catalogId"] or "", p["index"]))
+
+    if not geolocated_photos:
+        raise RuntimeError(
+            f"Extracted 0 geolocated photos out of {len(unique_items)} items; "
+            "aborting write to preserve existing dataset."
+        )
 
     output = {
         "albumTitle": "MenloPark Historical Photo Archive",
