@@ -638,7 +638,11 @@
     const fieldDefinitions = [
       { key: 'identifier', label: 'Identifier' },
       { key: 'date', label: 'Date' },
+      { key: 'year_confidence', label: 'Year Confidence' },
+      { key: 'how_year_was_determined', label: 'How Year Was Determined' },
       { key: 'coverage', label: 'Coverage / Place' },
+      { key: 'location_confidence', label: 'Location Confidence' },
+      { key: 'how_location_was_determined', label: 'How Location Was Determined' },
       { key: 'creator', label: 'Creator' },
       { key: 'source', label: 'Source / Donor' },
       { key: 'collection', label: 'Collection' },
