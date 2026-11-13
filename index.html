@@ -131,6 +131,23 @@
       </div>
 
       <button
+        id="aligned-filter-btn"
+        class="header-action-btn aligned-filter-btn"
+        type="button"
+        aria-pressed="false"
+        title="Filter map and list to landmarks aligned with modern Google Street View"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+          <line x1="12" y1="3" x2="12" y2="21"></line>
+          <polyline points="8 9 5 12 8 15"></polyline>
+          <polyline points="16 9 19 12 16 15"></polyline>
+        </svg>
+        <span>Then &amp; Now</span>
+        <span id="aligned-count-badge" class="seg-count">6</span>
+      </button>
+
+      <button
         id="random-photo-btn"
         class="header-action-btn"
         type="button"
@@ -321,6 +338,46 @@
         <div class="inspector-stage">
           <div id="stage-counter-pill" class="stage-counter-pill">1 / 4128</div>
 
+          <!-- Past-in-Present Street View Mode Switcher (Shown when landmark is aligned) -->
+          <div
+            id="stage-mode-switcher"
+            class="stage-mode-switcher"
+            role="tablist"
+            aria-label="Photo comparison mode"
+            hidden
+          >
+            <button
+              id="stage-mode-pip-btn"
+              class="stage-mode-btn active"
+              data-mode="pip"
+              type="button"
+              role="tab"
+              aria-selected="true"
+            >
+              Past-in-Present
+            </button>
+            <button
+              id="stage-mode-wipe-btn"
+              class="stage-mode-btn"
+              data-mode="wipe"
+              type="button"
+              role="tab"
+              aria-selected="false"
+            >
+              Split Wipe
+            </button>
+            <button
+              id="stage-mode-orig-btn"
+              class="stage-mode-btn"
+              data-mode="original"
+              type="button"
+              role="tab"
+              aria-selected="false"
+            >
+              Original Scan
+            </button>
+          </div>
+
           <button
             id="modal-prev-btn"
             class="stage-nav-btn prev"
@@ -333,6 +390,48 @@
             </svg>
           </button>
 
+          <!-- Interactive Past-in-Present Street View Canvas -->
+          <div id="pip-stage-viewport" class="pip-stage-viewport" hidden>
+            <div id="pip-canvas" class="pip-canvas">
+              <img
+                id="pip-sv-img"
+                class="pip-sv-img"
+                src=""
+                alt="Modern Google Street View perspective"
+                draggable="false"
+              />
+              <div id="pip-inset-frame" class="pip-inset-frame">
+                <img
+                  id="pip-inset-img"
+                  class="pip-inset-img"
+                  src=""
+                  alt="Perspectively aligned historical photograph"
+                  draggable="false"
+                />
+              </div>
+              <div
+                id="pip-wipe-divider"
+                class="pip-wipe-divider"
+                role="slider"
+                aria-label="Drag to wipe between historical photo and modern Street View"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="50"
+                tabindex="0"
+                hidden
+              >
+                <span class="pip-wipe-knob" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 4 12 9 6"></polyline>
+                    <polyline points="15 6 20 12 15 18"></polyline>
+                  </svg>
+                </span>
+              </div>
+              <span id="pip-era-tag-past" class="pip-corner-tag past">c. 1885</span>
+              <span id="pip-era-tag-now" class="pip-corner-tag now">Street View</span>
+            </div>
+          </div>
+
           <img
             id="inspector-img"
             class="inspector-img"
@@ -340,6 +439,32 @@
             alt=""
             title="Click to toggle zoom"
           />
+
+          <!-- Floating Opacity / Wipe Slider Bar -->
+          <div id="pip-controls-dock" class="pip-controls-dock" hidden>
+            <button id="pip-preset-now-btn" class="pip-preset-btn" type="button" title="Show 0% historical (Today's Street View)">
+              Now
+            </button>
+            <input
+              id="pip-slider"
+              class="pip-slider"
+              type="range"
+              min="0"
+              max="100"
+              value="100"
+              aria-label="Historical overlay opacity or split position"
+            />
+            <span id="pip-slider-val" class="pip-slider-val">100%</span>
+            <button id="pip-preset-ghost-btn" class="pip-preset-btn" type="button" title="55% X-ray ghost blend">
+              55%
+            </button>
+            <button id="pip-preset-then-btn" class="pip-preset-btn active" type="button" title="100% crisp Past-in-Present window">
+              Then
+            </button>
+            <button id="pip-frame-toggle-btn" class="pip-preset-btn" type="button" aria-pressed="false" title="Toggle archival photo border">
+              Border
+            </button>
+          </div>
 
           <button
             id="modal-next-btn"
@@ -378,6 +503,27 @@
             </div>
 
             <h2 id="inspector-title" class="inspector-title">Photo Title</h2>
+
+            <!-- Past-in-Present Registration Info Card (Shown when landmark has Street View alignment) -->
+            <div id="inspector-alignment-card" class="inspector-alignment-card" style="display: none;">
+              <div class="alignment-card-head">
+                <span class="alignment-card-title">Past-in-Present Street View Aligned</span>
+                <span id="inspector-alignment-metrics" class="alignment-card-metrics">39 inliers · 1.25 px</span>
+              </div>
+              <p class="alignment-card-desc">
+                Drag the slider to cross-dissolve between the archival photograph and modern rectilinear Google Street View, or switch to <strong>Split Wipe</strong> to scrub across rooflines and street edges.
+              </p>
+              <a
+                id="inspector-matched-pano-link"
+                class="alignment-pano-link"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open Exact Matched 360° Street View Panorama ↗
+              </a>
+            </div>
+
             <div id="inspector-notes" class="inspector-notes"></div>
 
             <!-- Interactive Tags & Subjects from JSON Info Blob -->
@@ -505,6 +651,7 @@
 
   <script src="vendor/leaflet.js"></script>
   <script src="data/photos.js"></script>
+  <script src="data/alignments.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

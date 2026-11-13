@@ -1725,3 +1725,435 @@ body {
     height: 40px;
   }
 }
+
+/* ==========================================================================
+   Past-in-Present Street View Interactive Mode (Opacity & Split Wipe)
+   ========================================================================== */
+
+[hidden] {
+  display: none !important;
+}
+
+.aligned-filter-btn {
+  border-color: hsla(28, 84%, 44%, 0.34);
+  background: hsla(36, 90%, 96%, 0.9);
+  color: hsl(24, 82%, 34%);
+}
+
+.aligned-filter-btn:hover {
+  background: hsla(34, 88%, 92%, 1);
+  border-color: hsla(28, 84%, 42%, 0.55);
+}
+
+.aligned-filter-btn .seg-count {
+  background: hsla(28, 84%, 46%, 0.16);
+  color: hsl(24, 84%, 32%);
+}
+
+.aligned-filter-btn.active {
+  background: hsl(28, 80%, 44%);
+  border-color: hsl(24, 82%, 34%);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.aligned-filter-btn.active .seg-count {
+  background: hsla(0, 0%, 100%, 0.22);
+  color: #fff;
+}
+
+.gmap-pin.has-alignment {
+  filter: drop-shadow(0 0 6px hsla(36, 95%, 52%, 0.72)) drop-shadow(0 3px 5px rgba(0, 0, 0, 0.36));
+}
+
+.pin-aligned-ring {
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid hsl(40, 98%, 64%);
+  pointer-events: none;
+}
+
+.pin-tooltip-aligned-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  background: hsla(28, 86%, 46%, 0.14);
+  color: hsl(24, 84%, 34%);
+  border: 1px solid hsla(28, 86%, 46%, 0.32);
+  border-radius: var(--radius-pill);
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 1px 7px;
+}
+
+.photo-card-aligned-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: hsla(28, 88%, 42%, 0.92);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: 0.56rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 5px;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.filmstrip-item.has-alignment::before {
+  content: 'T&N';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 2;
+  background: hsla(28, 88%, 42%, 0.92);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  font-weight: 700;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.stage-counter-pill {
+  z-index: 26;
+}
+
+.stage-nav-btn {
+  z-index: 28;
+}
+
+.stage-mode-switcher {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 27;
+  display: inline-flex;
+  background: hsla(220, 25%, 10%, 0.8);
+  backdrop-filter: blur(8px);
+  border: 1px solid hsla(0, 0%, 100%, 0.18);
+  border-radius: var(--radius-pill);
+  padding: 3px;
+  gap: 2px;
+}
+
+.stage-mode-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: hsla(0, 0%, 100%, 0.76);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.stage-mode-btn:hover {
+  color: #fff;
+}
+
+.stage-mode-btn.active {
+  background: hsl(28, 84%, 48%);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.pip-stage-viewport {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pip-canvas {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  max-height: 100%;
+  line-height: 0;
+  --inset-left: 30%;
+  --inset-top: 20%;
+  --inset-width: 40%;
+  --inset-height: 40%;
+  --wipe-frac: 0.5;
+  --wipe-pct: 50%;
+}
+
+.pip-canvas.wipe-mode {
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.pip-sv-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(92vh - 130px);
+  max-height: calc(92dvh - 130px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.pip-inset-frame {
+  position: absolute;
+  left: var(--inset-left);
+  top: var(--inset-top);
+  width: var(--inset-width);
+  height: var(--inset-height);
+  overflow: hidden;
+  pointer-events: none;
+  transition: box-shadow 180ms ease;
+}
+
+.pip-inset-frame.framed {
+  box-shadow: 0 0 0 2.5px hsla(38, 40%, 96%, 0.94), 0 10px 28px rgba(0, 0, 0, 0.52);
+}
+
+.pip-inset-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: fill;
+  will-change: opacity, clip-path;
+}
+
+.pip-canvas.wipe-mode .pip-inset-img {
+  clip-path: inset(0 calc(100% - var(--wipe-pct)) 0 0);
+}
+
+.pip-wipe-divider {
+  position: absolute;
+  top: var(--inset-top);
+  height: var(--inset-height);
+  left: calc(var(--inset-left) + var(--inset-width) * var(--wipe-frac));
+  width: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.65);
+  transform: translateX(-50%);
+  z-index: 15;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.pip-wipe-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: hsl(28, 84%, 48%);
+  border: 2px solid #ffffff;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.48);
+}
+
+.pip-corner-tag {
+  position: absolute;
+  z-index: 14;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  pointer-events: none;
+  line-height: 1.35;
+}
+
+.pip-corner-tag.past {
+  left: var(--inset-left);
+  top: max(6px, calc(var(--inset-top) - 24px));
+  background: hsla(28, 86%, 40%, 0.9);
+  color: #fff;
+}
+
+.pip-corner-tag.now {
+  right: 10px;
+  bottom: 52px;
+  background: hsla(220, 25%, 10%, 0.72);
+  color: hsla(0, 0%, 100%, 0.9);
+  border: 1px solid hsla(0, 0%, 100%, 0.16);
+}
+
+.pip-controls-dock {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 27;
+  background: hsla(220, 25%, 10%, 0.84);
+  backdrop-filter: blur(10px);
+  border: 1px solid hsla(0, 0%, 100%, 0.18);
+  border-radius: var(--radius-pill);
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 20px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.pip-slider {
+  width: 140px;
+  accent-color: hsl(28, 88%, 52%);
+  cursor: pointer;
+}
+
+.pip-slider-val {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #fff;
+  min-width: 36px;
+  text-align: right;
+}
+
+.pip-preset-btn {
+  appearance: none;
+  border: 1px solid hsla(0, 0%, 100%, 0.18);
+  background: hsla(0, 0%, 100%, 0.08);
+  color: hsla(0, 0%, 100%, 0.86);
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.pip-preset-btn:hover {
+  background: hsla(0, 0%, 100%, 0.18);
+  color: #fff;
+}
+
+.pip-preset-btn.active,
+.pip-preset-btn[aria-pressed="true"] {
+  background: hsl(28, 84%, 48%);
+  border-color: hsl(28, 84%, 56%);
+  color: #fff;
+}
+
+.inspector-alignment-card {
+  background: hsla(34, 88%, 95%, 0.75);
+  border: 1px solid hsla(28, 80%, 44%, 0.28);
+  border-radius: var(--radius-md);
+  padding: 11px 13px;
+  margin-bottom: 14px;
+}
+
+.alignment-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  flex-wrap: wrap;
+}
+
+.alignment-card-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: hsl(24, 84%, 34%);
+}
+
+.alignment-card-metrics {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  background: hsla(28, 80%, 44%, 0.14);
+  color: hsl(24, 84%, 30%);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+}
+
+.alignment-card-desc {
+  font-size: 0.78rem;
+  line-height: 1.42;
+  color: var(--text-secondary);
+  margin-bottom: 7px;
+}
+
+.alignment-pano-link {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--pin-active-dark);
+  text-decoration: none;
+}
+
+.alignment-pano-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 900px) {
+  .inspector-stage.has-alignment {
+    min-height: 290px;
+    height: 46vh;
+    height: 46dvh;
+    max-height: 410px;
+  }
+
+  .pip-sv-img {
+    max-height: 100%;
+  }
+
+  .stage-mode-switcher {
+    top: 10px;
+    right: 56px;
+  }
+
+  .stage-mode-btn {
+    font-size: 0.66rem;
+    padding: 4px 8px;
+  }
+
+  .pip-slider {
+    width: 96px;
+  }
+}
+
+@media (max-width: 520px) {
+  .stage-counter-pill {
+    display: none;
+  }
+
+  .stage-mode-switcher {
+    left: 10px;
+    right: auto;
+  }
+
+  .pip-preset-btn#pip-preset-ghost-btn {
+    display: none;
+  }
+
+  .pip-slider {
+    width: 84px;
+  }
+}
+

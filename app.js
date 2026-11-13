@@ -10,6 +10,14 @@
   const allPhotos = dataset.photos || [];
   const albumBySlug = new Map((dataset.albums || []).map((a) => [a.slug, a]));
 
+  const rawAlignments = (window.STREETVIEW_ALIGNMENTS && window.STREETVIEW_ALIGNMENTS.byPhotoId) || {};
+  const alignmentByPhotoId = new Map(Object.entries(rawAlignments));
+  const alignmentByCatalogId = new Map(
+    Object.values(rawAlignments)
+      .filter((a) => a && a.catalogId)
+      .map((a) => [String(a.catalogId), a])
+  );
+
   // Hydrate derived URLs and search index on startup
   allPhotos.forEach((p) => {
     const alb = albumBySlug.get(p.album) || {};
@@ -17,6 +25,11 @@
     if (!p.albumTitle) p.albumTitle = alb.title || 'Menlo Park Historical Photo Archive';
     if (!p.albumShortTitle) p.albumShortTitle = alb.shortTitle || 'Menlo Park';
     if (!p.albumShortUrl) p.albumShortUrl = alb.shortUrl || 'https://photos.app.goo.gl/jRkKPneBYiDHSSpYA';
+
+    p._alignment =
+      alignmentByPhotoId.get(p.id) ||
+      (p.catalogId ? alignmentByCatalogId.get(String(p.catalogId)) : null) ||
+      null;
 
     if (p.baseUrl) {
       if (!p.thumbUrl) p.thumbUrl = `${p.baseUrl}=w360-h270-c`;
@@ -56,6 +69,7 @@
       info.publisher,
       tagsStr,
       subjectsStr,
+      p._alignment ? 'then and now aligned street view past in present' : '',
     ]
       .filter(Boolean)
       .join(' ')
@@ -70,12 +84,18 @@
     pinMode: 'all', // 'all' (individual photo pins) | 'landmark' (grouped coordinate pins)
     mapLayer: 'm', // 'm' (Road), 'y' (Hybrid), 's' (Satellite), 'p' (Terrain)
     selectedEra: 'all',
+    alignedOnly: false,
     searchQuery: '',
     filteredPhotos: [...allPhotos],
     feedRenderLimit: FEED_PAGE_SIZE,
     selectedPhotoId: null,
     activeContextList: [],
     sidebarCollapsed: false,
+    // Past-in-Present Street View Interactive State
+    pipMode: 'pip', // 'pip' | 'wipe' | 'original'
+    pipOpacity: 100, // 0..100
+    pipWipe: 50, // 0..100
+    pipFramed: false,
   };
 
   // DOM Elements
@@ -91,6 +111,8 @@
     landmarkPinsCount: document.getElementById('landmark-pins-count'),
     modeAllPinsBtn: document.getElementById('mode-all-pins-btn'),
     modeClusteredBtn: document.getElementById('mode-clustered-btn'),
+    alignedFilterBtn: document.getElementById('aligned-filter-btn'),
+    alignedCountBadge: document.getElementById('aligned-count-badge'),
     randomPhotoBtn: document.getElementById('random-photo-btn'),
     sidebar: document.getElementById('sidebar'),
     sidebarBackdrop: document.getElementById('sidebar-backdrop'),
@@ -118,11 +140,33 @@
     inspectorStage: document.querySelector('.inspector-stage'),
     inspectorDetails: document.querySelector('.inspector-details'),
     stageCounterPill: document.getElementById('stage-counter-pill'),
+    stageModeSwitcher: document.getElementById('stage-mode-switcher'),
+    stageModePipBtn: document.getElementById('stage-mode-pip-btn'),
+    stageModeWipeBtn: document.getElementById('stage-mode-wipe-btn'),
+    stageModeOrigBtn: document.getElementById('stage-mode-orig-btn'),
+    pipStageViewport: document.getElementById('pip-stage-viewport'),
+    pipCanvas: document.getElementById('pip-canvas'),
+    pipSvImg: document.getElementById('pip-sv-img'),
+    pipInsetFrame: document.getElementById('pip-inset-frame'),
+    pipInsetImg: document.getElementById('pip-inset-img'),
+    pipWipeDivider: document.getElementById('pip-wipe-divider'),
+    pipEraTagPast: document.getElementById('pip-era-tag-past'),
+    pipEraTagNow: document.getElementById('pip-era-tag-now'),
+    pipControlsDock: document.getElementById('pip-controls-dock'),
+    pipSlider: document.getElementById('pip-slider'),
+    pipSliderVal: document.getElementById('pip-slider-val'),
+    pipPresetNowBtn: document.getElementById('pip-preset-now-btn'),
+    pipPresetGhostBtn: document.getElementById('pip-preset-ghost-btn'),
+    pipPresetThenBtn: document.getElementById('pip-preset-then-btn'),
+    pipFrameToggleBtn: document.getElementById('pip-frame-toggle-btn'),
     inspectorImg: document.getElementById('inspector-img'),
     inspectorAlbumBadge: document.getElementById('inspector-album-badge'),
     inspectorYearBadge: document.getElementById('inspector-year-badge'),
     inspectorCatalogBadge: document.getElementById('inspector-catalog-badge'),
     inspectorTitle: document.getElementById('inspector-title'),
+    inspectorAlignmentCard: document.getElementById('inspector-alignment-card'),
+    inspectorAlignmentMetrics: document.getElementById('inspector-alignment-metrics'),
+    inspectorMatchedPanoLink: document.getElementById('inspector-matched-pano-link'),
     inspectorNotes: document.getElementById('inspector-notes'),
     inspectorTaxonomy: document.getElementById('inspector-taxonomy'),
     inspectorJsonInfoSection: document.getElementById('inspector-json-info-section'),
@@ -218,16 +262,17 @@
   }
 
   // Build Google Maps SVG Pin HTML
-  function createPinIcon(photo, isSelected, clusterCount) {
+  function createPinIcon(photo, isSelected, clusterCount, hasAlignment) {
     const fillColor = isSelected ? 'hsl(214, 89%, 52%)' : getEraColor(photo.year);
     const strokeColor = '#ffffff';
     const badgeHtml =
       clusterCount && clusterCount > 1
         ? `<span class="pin-cluster-badge">${clusterCount}</span>`
         : '';
+    const alignedRingHtml = hasAlignment ? '<span class="pin-aligned-ring"></span>' : '';
 
     const html = `
-      <div class="gmap-pin ${isSelected ? 'selected' : ''}" data-photo-id="${photo.id}">
+      <div class="gmap-pin ${isSelected ? 'selected' : ''} ${hasAlignment ? 'has-alignment' : ''}" data-photo-id="${photo.id}">
         <svg viewBox="0 0 28 38" xmlns="http://www.w3.org/2000/svg">
           <path
             d="M14 1.5C7.1 1.5 1.5 7.1 1.5 14C1.5 22.9 14 36.2 14 36.2C14 36.2 26.5 22.9 26.5 14C26.5 7.1 20.9 1.5 14 1.5Z"
@@ -237,6 +282,7 @@
           />
           <circle cx="14" cy="13.5" r="4.8" fill="#ffffff" />
         </svg>
+        ${alignedRingHtml}
         ${badgeHtml}
       </div>
     `;
@@ -251,7 +297,7 @@
   }
 
   // Build Hover Tooltip Preview Card
-  function createTooltipHtml(photo, clusterCount) {
+  function createTooltipHtml(photo, clusterCount, hasAlignment) {
     const countLabel =
       clusterCount && clusterCount > 1 ? `${clusterCount} photos here` : photo.albumShortTitle || '';
     const codeLabel = photo.catalogId ? `#${escapeHtml(photo.catalogId)}` : '';
@@ -260,17 +306,21 @@
       photo.info && photo.info.coverage
         ? `<div style="font-size: 0.68rem; color: var(--text-secondary);">${escapeHtml(photo.info.coverage)}</div>`
         : '';
+    const alignedPill = hasAlignment
+      ? `<span class="pin-tooltip-aligned-pill">Then &amp; Now Street View</span>`
+      : '';
 
     return `
       <div class="pin-tooltip-card">
         <img class="pin-tooltip-img" src="${photo.thumbUrl}" alt="${escapeHtml(photo.title)}" loading="lazy" />
+        ${alignedPill}
         <div class="pin-tooltip-meta">
           <span>${escapeHtml(photo.yearLabel)}</span>
           <span>${escapeHtml(rightMeta)}</span>
         </div>
         <div class="pin-tooltip-title">${escapeHtml(photo.title)}</div>
         ${coverageLine}
-        <div class="pin-tooltip-hint">Click pin to view photo &amp; info</div>
+        <div class="pin-tooltip-hint">${hasAlignment ? 'Click for interactive Street View slider' : 'Click pin to view photo &amp; info'}</div>
       </div>
     `;
   }
@@ -316,13 +366,17 @@
     });
   }
 
-  // Filter Photos based on Album, Search Query & Era Selection
+  // Filter Photos based on Album, Search Query, Era & Then-and-Now Selection
   function applyFilters() {
     const q = state.searchQuery.trim().toLowerCase();
     const era = state.selectedEra;
     const album = state.selectedAlbum;
+    const alignedOnly = state.alignedOnly;
 
     state.filteredPhotos = allPhotos.filter((p) => {
+      if (alignedOnly && !p._alignment) {
+        return false;
+      }
       if (album !== 'all' && p.album !== album) {
         return false;
       }
@@ -357,16 +411,17 @@
     if (state.pinMode === 'all') {
       state.filteredPhotos.forEach((photo) => {
         const isSelected = photo.id === state.selectedPhotoId;
+        const hasAlignment = Boolean(photo._alignment);
         const lat = photo.displayLat || photo.lat;
         const lng = photo.displayLng || photo.lng;
 
         const marker = L.marker([lat, lng], {
-          icon: createPinIcon(photo, isSelected, 1),
-          zIndexOffset: isSelected ? 1000 : 0,
+          icon: createPinIcon(photo, isSelected, 1, hasAlignment),
+          zIndexOffset: isSelected ? 1000 : hasAlignment ? 600 : 0,
         });
 
         if (hasHoverSupport) {
-          marker.bindTooltip(() => createTooltipHtml(photo, 1), {
+          marker.bindTooltip(() => createTooltipHtml(photo, 1, hasAlignment), {
             direction: 'top',
             className: 'pin-hover-tooltip',
             opacity: 1,
@@ -405,17 +460,20 @@
       });
 
       groups.forEach((groupPhotos) => {
+        const hasAlignment = groupPhotos.some((p) => Boolean(p._alignment));
         const leadPhoto =
-          groupPhotos.find((p) => p.id === state.selectedPhotoId) || groupPhotos[0];
+          groupPhotos.find((p) => p.id === state.selectedPhotoId) ||
+          groupPhotos.find((p) => Boolean(p._alignment)) ||
+          groupPhotos[0];
         const isSelected = groupPhotos.some((p) => p.id === state.selectedPhotoId);
 
         const marker = L.marker([leadPhoto.lat, leadPhoto.lng], {
-          icon: createPinIcon(leadPhoto, isSelected, groupPhotos.length),
-          zIndexOffset: isSelected ? 1000 : groupPhotos.length * 5,
+          icon: createPinIcon(leadPhoto, isSelected, groupPhotos.length, hasAlignment),
+          zIndexOffset: isSelected ? 1000 : (hasAlignment ? 600 : 0) + groupPhotos.length * 5,
         });
 
         if (hasHoverSupport) {
-          marker.bindTooltip(() => createTooltipHtml(leadPhoto, groupPhotos.length), {
+          marker.bindTooltip(() => createTooltipHtml(leadPhoto, groupPhotos.length, hasAlignment), {
             direction: 'top',
             className: 'pin-hover-tooltip',
             opacity: 1,
@@ -523,6 +581,10 @@
               ? 'SNAPSHOT'
               : 'MP';
 
+      const alignedCardBadge = photo._alignment
+        ? '<span class="photo-card-aligned-badge" title="Interactive Past-in-Present Street View alignment available">THEN &amp; NOW</span>'
+        : '';
+
       card.innerHTML = `
         <div class="photo-card-thumb-wrap">
           <img
@@ -532,6 +594,7 @@
             loading="lazy"
           />
           <span class="photo-card-album-badge ${albumBadgeClass}">${albumBadgeLabel}</span>
+          ${alignedCardBadge}
           <span class="photo-card-year-badge">${escapeHtml(photo.yearLabel)}</span>
         </div>
         <div class="photo-card-body">
@@ -821,8 +884,82 @@
     applyFilters();
   }
 
+  // Synchronize Past-in-Present Opacity / Split Wipe Stage UI
+  function syncPipVisuals() {
+    const activePhoto = allPhotos.find((p) => p.id === state.selectedPhotoId);
+    const al = activePhoto && activePhoto._alignment;
+    if (!al || !dom.pipStageViewport) {
+      if (dom.stageModeSwitcher) dom.stageModeSwitcher.hidden = true;
+      if (dom.pipStageViewport) dom.pipStageViewport.hidden = true;
+      if (dom.pipControlsDock) dom.pipControlsDock.hidden = true;
+      if (dom.inspectorImg) dom.inspectorImg.hidden = false;
+      if (dom.inspectorStage) dom.inspectorStage.classList.remove('has-alignment');
+      return;
+    }
+
+    dom.inspectorStage.classList.add('has-alignment');
+    dom.stageModeSwitcher.hidden = false;
+
+    const mode = state.pipMode;
+    [
+      [dom.stageModePipBtn, 'pip'],
+      [dom.stageModeWipeBtn, 'wipe'],
+      [dom.stageModeOrigBtn, 'original'],
+    ].forEach(([btn, m]) => {
+      if (!btn) return;
+      const isAct = mode === m;
+      btn.classList.toggle('active', isAct);
+      btn.setAttribute('aria-selected', isAct ? 'true' : 'false');
+    });
+
+    if (mode === 'original') {
+      dom.pipStageViewport.hidden = true;
+      dom.pipControlsDock.hidden = true;
+      dom.inspectorImg.hidden = false;
+      return;
+    }
+
+    dom.inspectorImg.hidden = true;
+    dom.pipStageViewport.hidden = false;
+    dom.pipControlsDock.hidden = false;
+
+    dom.pipInsetFrame.classList.toggle('framed', state.pipFramed);
+    if (dom.pipFrameToggleBtn) {
+      dom.pipFrameToggleBtn.setAttribute('aria-pressed', state.pipFramed ? 'true' : 'false');
+      dom.pipFrameToggleBtn.classList.toggle('active', state.pipFramed);
+    }
+
+    const isWipe = mode === 'wipe';
+    dom.pipCanvas.classList.toggle('wipe-mode', isWipe);
+    dom.pipWipeDivider.hidden = !isWipe;
+
+    if (isWipe) {
+      const wVal = Math.max(0, Math.min(100, state.pipWipe));
+      dom.pipInsetImg.style.opacity = '1';
+      dom.pipCanvas.style.setProperty('--wipe-frac', (wVal / 100).toFixed(4));
+      dom.pipCanvas.style.setProperty('--wipe-pct', `${wVal.toFixed(2)}%`);
+      dom.pipWipeDivider.setAttribute('aria-valuenow', String(Math.round(wVal)));
+      dom.pipSlider.value = String(Math.round(wVal));
+      dom.pipSliderVal.textContent = `${Math.round(wVal)}%`;
+      dom.pipPresetNowBtn.classList.toggle('active', Math.round(wVal) === 0);
+      dom.pipPresetGhostBtn.classList.toggle('active', Math.round(wVal) === 50);
+      dom.pipPresetGhostBtn.textContent = '50%';
+      dom.pipPresetThenBtn.classList.toggle('active', Math.round(wVal) === 100);
+    } else {
+      const oVal = Math.max(0, Math.min(100, state.pipOpacity));
+      dom.pipInsetImg.style.opacity = (oVal / 100).toFixed(3);
+      dom.pipSlider.value = String(Math.round(oVal));
+      dom.pipSliderVal.textContent = `${Math.round(oVal)}%`;
+      dom.pipPresetNowBtn.classList.toggle('active', Math.round(oVal) === 0);
+      dom.pipPresetGhostBtn.classList.toggle('active', Math.round(oVal) === 55);
+      dom.pipPresetGhostBtn.textContent = '55%';
+      dom.pipPresetThenBtn.classList.toggle('active', Math.round(oVal) === 100);
+    }
+  }
+
   // Open Photo Lightbox / Detail Inspector Modal
   function openPhotoModal(photo, contextList) {
+    const prevPhoto = allPhotos.find((p) => p.id === state.selectedPhotoId);
     state.selectedPhotoId = photo.id;
     state.activeContextList =
       contextList && contextList.length > 0 ? contextList : state.filteredPhotos;
@@ -844,6 +981,33 @@
       }
     };
     hiRes.src = photo.fullUrl;
+
+    // Configure Past-in-Present Street View stage if this landmark is aligned
+    const al = photo._alignment;
+    if (al) {
+      if (!prevPhoto || !prevPhoto._alignment || state.pipMode === 'original') {
+        state.pipMode = 'pip';
+      }
+      if (dom.pipSvImg.getAttribute('src') !== al.svImage) {
+        dom.pipSvImg.src = al.svImage;
+      }
+      dom.pipInsetImg.src = al.insetImage;
+      dom.pipCanvas.style.setProperty('--inset-left', `${al.rectPct.left}%`);
+      dom.pipCanvas.style.setProperty('--inset-top', `${al.rectPct.top}%`);
+      dom.pipCanvas.style.setProperty('--inset-width', `${al.rectPct.width}%`);
+      dom.pipCanvas.style.setProperty('--inset-height', `${al.rectPct.height}%`);
+      if (dom.pipEraTagPast) dom.pipEraTagPast.textContent = al.historicalLabel || photo.yearLabel;
+      if (dom.pipEraTagNow) dom.pipEraTagNow.textContent = al.modernLabel || 'Street View';
+
+      if (dom.inspectorAlignmentCard) {
+        dom.inspectorAlignmentCard.style.display = 'block';
+        dom.inspectorAlignmentMetrics.textContent = `${al.inliers} LoFTR inliers · ${al.reprojErrorPx} px`;
+        dom.inspectorMatchedPanoLink.href = al.streetViewPanoUrl;
+      }
+    } else if (dom.inspectorAlignmentCard) {
+      dom.inspectorAlignmentCard.style.display = 'none';
+    }
+    syncPipVisuals();
 
     // Album Badge
     if (dom.inspectorAlbumBadge) {
@@ -895,7 +1059,7 @@
         : `${colocated.length} photos at this spot`;
 
     // External Action Links
-    dom.inspectorStreetViewLink.href = photo.streetViewUrl;
+    dom.inspectorStreetViewLink.href = (al && al.streetViewPanoUrl) || photo.streetViewUrl;
     dom.inspectorGmapsLink.href = photo.googleMapsUrl;
     dom.inspectorGphotosLink.href = photo.albumPhotoUrl || photo.albumShortUrl;
     dom.inspectorDownloadLink.href =
@@ -925,8 +1089,8 @@
     listToShow.forEach((p) => {
       const item = document.createElement('button');
       item.type = 'button';
-      item.className = `filmstrip-item ${p.id === activePhoto.id ? 'active' : ''}`;
-      item.title = `${p.title} (${p.yearLabel})`;
+      item.className = `filmstrip-item ${p.id === activePhoto.id ? 'active' : ''} ${p._alignment ? 'has-alignment' : ''}`;
+      item.title = `${p.title} (${p.yearLabel})${p._alignment ? ' · Then & Now Street View' : ''}`;
       item.innerHTML = `
         <img src="${p.thumbUrl}" alt="${escapeHtml(p.title)}" loading="lazy" />
         <span class="filmstrip-year">${escapeHtml(String(p.year || p.yearLabel).slice(0, 6))}</span>
@@ -1038,6 +1202,109 @@
       dom.modeAllPinsBtn.classList.remove('active');
       renderMapPins();
     });
+
+    // Then & Now Aligned Landmarks Filter Toggle
+    if (dom.alignedFilterBtn) {
+      dom.alignedFilterBtn.addEventListener('click', () => {
+        state.alignedOnly = !state.alignedOnly;
+        dom.alignedFilterBtn.classList.toggle('active', state.alignedOnly);
+        dom.alignedFilterBtn.setAttribute('aria-pressed', state.alignedOnly ? 'true' : 'false');
+        applyFilters();
+
+        if (state.alignedOnly && state.filteredPhotos.length > 0) {
+          const latlngs = state.filteredPhotos.map((p) => [p.lat, p.lng]);
+          map.flyToBounds(L.latLngBounds(latlngs), { padding: [48, 48], maxZoom: 15, duration: 0.8 });
+        }
+      });
+    }
+
+    // Past-in-Present Mode Switcher & Opacity / Split Wipe Controls
+    if (dom.stageModeSwitcher) {
+      dom.stageModeSwitcher.addEventListener('click', (e) => {
+        const btn = e.target.closest('.stage-mode-btn');
+        if (!btn || !btn.dataset.mode) return;
+        state.pipMode = btn.dataset.mode;
+        syncPipVisuals();
+      });
+    }
+
+    if (dom.pipSlider) {
+      dom.pipSlider.addEventListener('input', (e) => {
+        const val = Number(e.target.value);
+        if (state.pipMode === 'wipe') {
+          state.pipWipe = val;
+        } else {
+          state.pipOpacity = val;
+        }
+        syncPipVisuals();
+      });
+    }
+
+    if (dom.pipPresetNowBtn) {
+      dom.pipPresetNowBtn.addEventListener('click', () => {
+        if (state.pipMode === 'wipe') state.pipWipe = 0;
+        else state.pipOpacity = 0;
+        syncPipVisuals();
+      });
+    }
+
+    if (dom.pipPresetGhostBtn) {
+      dom.pipPresetGhostBtn.addEventListener('click', () => {
+        if (state.pipMode === 'wipe') state.pipWipe = 50;
+        else state.pipOpacity = 55;
+        syncPipVisuals();
+      });
+    }
+
+    if (dom.pipPresetThenBtn) {
+      dom.pipPresetThenBtn.addEventListener('click', () => {
+        if (state.pipMode === 'wipe') state.pipWipe = 100;
+        else state.pipOpacity = 100;
+        syncPipVisuals();
+      });
+    }
+
+    if (dom.pipFrameToggleBtn) {
+      dom.pipFrameToggleBtn.addEventListener('click', () => {
+        state.pipFramed = !state.pipFramed;
+        syncPipVisuals();
+      });
+    }
+
+    // Pointer Drag on Split-Wipe Curtain inside Past-in-Present Canvas
+    if (dom.pipCanvas) {
+      let draggingWipe = false;
+      const updateWipeFromPointer = (clientX) => {
+        if (!dom.pipInsetFrame) return;
+        const rect = dom.pipInsetFrame.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const pct = Math.max(0, Math.min(100, ((clientX - rect.left) / rect.width) * 100));
+        state.pipWipe = pct;
+        syncPipVisuals();
+      };
+
+      dom.pipCanvas.addEventListener('pointerdown', (e) => {
+        if (state.pipMode !== 'wipe') return;
+        draggingWipe = true;
+        if (dom.pipCanvas.setPointerCapture) {
+          try {
+            dom.pipCanvas.setPointerCapture(e.pointerId);
+          } catch (_) {}
+        }
+        updateWipeFromPointer(e.clientX);
+      });
+
+      dom.pipCanvas.addEventListener('pointermove', (e) => {
+        if (!draggingWipe || state.pipMode !== 'wipe') return;
+        updateWipeFromPointer(e.clientX);
+      });
+
+      const stopWipeDrag = () => {
+        draggingWipe = false;
+      };
+      dom.pipCanvas.addEventListener('pointerup', stopWipeDrag);
+      dom.pipCanvas.addEventListener('pointercancel', stopWipeDrag);
+    }
 
     // Random Photo Button
     dom.randomPhotoBtn.addEventListener('click', () => {
@@ -1159,10 +1426,14 @@
     if (dom.inspectorStage) {
       let touchStartX = 0;
       let touchStartY = 0;
+      let ignoreStageSwipe = false;
       dom.inspectorStage.addEventListener(
         'touchstart',
         (e) => {
           if (e.touches.length !== 1) return;
+          ignoreStageSwipe =
+            state.pipMode === 'wipe' ||
+            Boolean(e.target.closest('.pip-controls-dock, .stage-mode-switcher'));
           touchStartX = e.touches[0].clientX;
           touchStartY = e.touches[0].clientY;
         },
@@ -1171,7 +1442,7 @@
       dom.inspectorStage.addEventListener(
         'touchend',
         (e) => {
-          if (dom.inspectorImg.classList.contains('zoomed')) return;
+          if (ignoreStageSwipe || dom.inspectorImg.classList.contains('zoomed')) return;
           if (!e.changedTouches || e.changedTouches.length !== 1) return;
           const dx = e.changedTouches[0].clientX - touchStartX;
           const dy = e.changedTouches[0].clientY - touchStartY;
@@ -1186,6 +1457,7 @@
     // Keyboard Shortcuts
     window.addEventListener('keydown', (e) => {
       if (!dom.modalBackdrop.classList.contains('open')) return;
+      if (e.target && e.target.matches('input, textarea, select')) return;
       if (e.key === 'Escape') {
         closePhotoModal();
       } else if (e.key === 'ArrowLeft') {
@@ -1202,6 +1474,7 @@
     const scCount = allPhotos.filter((p) => p.album === 'santa-cruz').length;
     const pcCount = allPhotos.filter((p) => p.album === 'scpl-postcards').length;
     const ssCount = allPhotos.filter((p) => p.album === 'scpl-snapshots').length;
+    const alignedCount = allPhotos.filter((p) => Boolean(p._alignment)).length;
 
     if (dom.headerSummaryText && allPhotos.length > 0) {
       dom.headerSummaryText.textContent = `${allPhotos.length.toLocaleString()} Geolocated Items · Menlo Park & Santa Cruz`;
@@ -1211,6 +1484,7 @@
     if (dom.albumScCount) dom.albumScCount.textContent = scCount;
     if (dom.albumPcCount) dom.albumPcCount.textContent = pcCount;
     if (dom.albumSsCount) dom.albumSsCount.textContent = ssCount;
+    if (dom.alignedCountBadge) dom.alignedCountBadge.textContent = alignedCount;
 
     initMap();
     bindEvents();
