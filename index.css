@@ -839,6 +839,7 @@ body {
 .inspector-main {
   display: grid;
   grid-template-columns: 1.45fr 1fr;
+  grid-template-rows: minmax(0, 1fr);
   min-height: 460px;
   max-height: calc(92vh - 110px);
   max-height: calc(92dvh - 110px);
@@ -853,7 +854,8 @@ body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  min-height: 360px;
+  min-height: 0;
+  height: 100%;
 }
 
 .inspector-img {
@@ -923,6 +925,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  min-height: 0;
   overflow-y: auto;
   background: var(--bg-elevated);
   border-left: 1px solid var(--border-subtle);
@@ -1414,22 +1417,36 @@ body {
    Responsive Breakpoints (Tablets & Phones)
    ========================================================================== */
 
-@media (max-width: 1220px) {
+@media (max-width: 1840px) {
   .app-header {
     height: auto;
     min-height: 0;
     flex-direction: column;
     align-items: stretch;
-    padding: 8px 14px;
-    gap: 8px;
+    padding: 8px 16px;
+    gap: 7px;
+  }
+
+  .brand-subtitle {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .header-controls {
     width: 100%;
+    gap: 7px;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding-bottom: 2px;
+  }
+
+  .header-controls .seg-btn {
+    padding: 5px 9px;
+  }
+
+  .header-controls .header-action-btn {
+    padding: 6px 10px;
   }
 
   .header-controls::-webkit-scrollbar {
@@ -1735,14 +1752,14 @@ body {
 }
 
 .aligned-filter-btn {
-  border-color: hsla(28, 84%, 44%, 0.34);
-  background: hsla(36, 90%, 96%, 0.9);
+  border-color: hsla(28, 84%, 44%, 0.36);
+  background: hsla(36, 90%, 96%, 0.92);
   color: hsl(24, 82%, 34%);
 }
 
 .aligned-filter-btn:hover {
-  background: hsla(34, 88%, 92%, 1);
-  border-color: hsla(28, 84%, 42%, 0.55);
+  background: hsla(34, 88%, 91%, 1);
+  border-color: hsla(28, 84%, 42%, 0.6);
 }
 
 .aligned-filter-btn .seg-count {
@@ -1751,15 +1768,32 @@ body {
 }
 
 .aligned-filter-btn.active {
-  background: hsl(28, 80%, 44%);
-  border-color: hsl(24, 82%, 34%);
+  background: #d97706;
+  border-color: #b45309;
+  color: #fff;
+  box-shadow: 0 0 0 2px hsla(36, 95%, 52%, 0.28), var(--shadow-sm);
+}
+
+.aligned-filter-btn.active .seg-count {
+  background: hsla(0, 0%, 100%, 0.24);
+  color: #fff;
+}
+
+.compare-streetview-btn {
+  background: #b45309;
+  border-color: #92400e;
   color: #fff;
   box-shadow: var(--shadow-sm);
 }
 
-.aligned-filter-btn.active .seg-count {
-  background: hsla(0, 0%, 100%, 0.22);
+.compare-streetview-btn:hover {
+  background: #d97706;
+  border-color: #b45309;
   color: #fff;
+}
+
+.compare-streetview-btn:active {
+  transform: translateY(0.5px);
 }
 
 .gmap-pin.has-alignment {

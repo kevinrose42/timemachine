@@ -15,7 +15,7 @@
     rel="stylesheet"
   />
   <link rel="stylesheet" href="vendor/leaflet.css" />
-  <link rel="stylesheet" href="index.css" />
+  <link rel="stylesheet" href="index.css?v=20261113c" />
 </head>
 <body>
   <!-- Top Header -->
@@ -135,7 +135,21 @@
         class="header-action-btn aligned-filter-btn"
         type="button"
         aria-pressed="false"
-        title="Filter map and list to landmarks aligned with modern Google Street View"
+        title="Filter map pins and photo list to landmarks aligned with modern Google Street View"
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+          <circle cx="12" cy="10" r="3"></circle>
+        </svg>
+        <span>Then &amp; Now Pins</span>
+        <span id="aligned-count-badge" class="seg-count">12</span>
+      </button>
+
+      <button
+        id="compare-streetview-btn"
+        class="header-action-btn compare-streetview-btn"
+        type="button"
+        title="Launch interactive Past-in-Present Street View slider across aligned landmarks"
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2"></rect>
@@ -143,8 +157,7 @@
           <polyline points="8 9 5 12 8 15"></polyline>
           <polyline points="16 9 19 12 16 15"></polyline>
         </svg>
-        <span>Then &amp; Now</span>
-        <span id="aligned-count-badge" class="seg-count">12</span>
+        <span>Compare Street View</span>
       </button>
 
       <button
@@ -650,8 +663,8 @@
   </div>
 
   <script src="vendor/leaflet.js"></script>
-  <script src="data/photos.js"></script>
-  <script src="data/alignments.js"></script>
-  <script src="app.js"></script>
+  <script src="data/photos.js?v=20261113c"></script>
+  <script src="data/alignments.js?v=20261113c"></script>
+  <script src="app.js?v=20261113c"></script>
 </body>
 </html>

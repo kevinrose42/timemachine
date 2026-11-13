@@ -12,9 +12,10 @@
 
   const rawAlignments = (window.STREETVIEW_ALIGNMENTS && window.STREETVIEW_ALIGNMENTS.byPhotoId) || {};
   const alignmentByPhotoId = new Map(Object.entries(rawAlignments));
+  const photoIdSet = new Set(allPhotos.map((p) => p.id));
   const alignmentByCatalogId = new Map(
     Object.values(rawAlignments)
-      .filter((a) => a && a.catalogId)
+      .filter((a) => a && a.catalogId && (!a.photoId || !photoIdSet.has(a.photoId)))
       .map((a) => [String(a.catalogId), a])
   );
 
@@ -26,9 +27,10 @@
     if (!p.albumShortTitle) p.albumShortTitle = alb.shortTitle || 'Menlo Park';
     if (!p.albumShortUrl) p.albumShortUrl = alb.shortUrl || 'https://photos.app.goo.gl/jRkKPneBYiDHSSpYA';
 
+    const isSecondarySide = Boolean(p.info && Number(p.info.file_index) > 1);
     p._alignment =
       alignmentByPhotoId.get(p.id) ||
-      (p.catalogId ? alignmentByCatalogId.get(String(p.catalogId)) : null) ||
+      (!isSecondarySide && p.catalogId ? alignmentByCatalogId.get(String(p.catalogId)) : null) ||
       null;
 
     if (p.baseUrl) {
@@ -76,6 +78,8 @@
       .toLowerCase();
   });
 
+  const alignedPhotos = allPhotos.filter((p) => Boolean(p._alignment));
+
   const FEED_PAGE_SIZE = 80;
 
   // Application State
@@ -113,6 +117,7 @@
     modeClusteredBtn: document.getElementById('mode-clustered-btn'),
     alignedFilterBtn: document.getElementById('aligned-filter-btn'),
     alignedCountBadge: document.getElementById('aligned-count-badge'),
+    compareStreetviewBtn: document.getElementById('compare-streetview-btn'),
     randomPhotoBtn: document.getElementById('random-photo-btn'),
     sidebar: document.getElementById('sidebar'),
     sidebarBackdrop: document.getElementById('sidebar-backdrop'),
@@ -366,6 +371,23 @@
     });
   }
 
+  function updateAlbumCountBadges() {
+    const basePool = state.alignedOnly ? alignedPhotos : allPhotos;
+    if (dom.albumAllCount) dom.albumAllCount.textContent = basePool.length;
+    if (dom.albumMpCount) {
+      dom.albumMpCount.textContent = basePool.filter((p) => p.album === 'menlo-park').length;
+    }
+    if (dom.albumScCount) {
+      dom.albumScCount.textContent = basePool.filter((p) => p.album === 'santa-cruz').length;
+    }
+    if (dom.albumPcCount) {
+      dom.albumPcCount.textContent = basePool.filter((p) => p.album === 'scpl-postcards').length;
+    }
+    if (dom.albumSsCount) {
+      dom.albumSsCount.textContent = basePool.filter((p) => p.album === 'scpl-snapshots').length;
+    }
+  }
+
   // Filter Photos based on Album, Search Query, Era & Then-and-Now Selection
   function applyFilters() {
     const q = state.searchQuery.trim().toLowerCase();
@@ -390,6 +412,7 @@
     });
 
     state.feedRenderLimit = FEED_PAGE_SIZE;
+    updateAlbumCountBadges();
 
     // Count unique locations in filtered set
     const uniqueLocs = new Set(state.filteredPhotos.map((p) => `${p.lat},${p.lng}`));
@@ -693,6 +716,11 @@
       duration: 0.65,
     });
 
+    if (state.alignedOnly) {
+      openPhotoModal(photo, state.filteredPhotos, 'pip');
+      return;
+    }
+
     const colocated = state.filteredPhotos.filter(
       (p) => p.lat === photo.lat && p.lng === photo.lng
     );
@@ -958,7 +986,7 @@
   }
 
   // Open Photo Lightbox / Detail Inspector Modal
-  function openPhotoModal(photo, contextList) {
+  function openPhotoModal(photo, contextList, preferredPipMode) {
     const prevPhoto = allPhotos.find((p) => p.id === state.selectedPhotoId);
     state.selectedPhotoId = photo.id;
     state.activeContextList =
@@ -985,7 +1013,9 @@
     // Configure Past-in-Present Street View stage if this landmark is aligned
     const al = photo._alignment;
     if (al) {
-      if (!prevPhoto || !prevPhoto._alignment || state.pipMode === 'original') {
+      if (preferredPipMode) {
+        state.pipMode = preferredPipMode;
+      } else if (!prevPhoto || !prevPhoto._alignment || state.pipMode === 'original') {
         state.pipMode = 'pip';
       }
       if (dom.pipSvImg.getAttribute('src') !== al.svImage) {
@@ -1065,7 +1095,7 @@
     dom.inspectorDownloadLink.href =
       (photo.info && photo.info.original_image_url) || photo.downloadUrl || photo.fullUrl;
 
-    // Render Co-Located Filmstrip if multiple photos share this coordinate
+    // Render Co-Located or Aligned Showcase Filmstrip
     renderModalFilmstrip(photo, colocated);
 
     // Show Modal and reset scroll position to top
@@ -1080,9 +1110,19 @@
   function renderModalFilmstrip(activePhoto, colocatedList) {
     dom.filmstripTrack.innerHTML = '';
 
-    const listToShow = colocatedList.length > 1 ? colocatedList : state.activeContextList.slice(0, 40);
-    dom.filmstripLabel.textContent =
-      colocatedList.length > 1
+    const isAlignedShowcase =
+      state.activeContextList.length > 1 &&
+      state.activeContextList.every((p) => Boolean(p._alignment));
+
+    const listToShow = isAlignedShowcase
+      ? state.activeContextList
+      : colocatedList.length > 1
+        ? colocatedList
+        : state.activeContextList.slice(0, 40);
+
+    dom.filmstripLabel.textContent = isAlignedShowcase
+      ? `Then & Now Landmarks (${listToShow.length}):`
+      : colocatedList.length > 1
         ? `At this exact location (${colocatedList.length}):`
         : `Nearby in list (${listToShow.length}):`;
 
@@ -1097,6 +1137,11 @@
       `;
       item.addEventListener('click', () => {
         openPhotoModal(p, listToShow);
+        if (map) {
+          const targetLat = state.pinMode === 'all' ? p.displayLat || p.lat : p.lat;
+          const targetLng = state.pinMode === 'all' ? p.displayLng || p.lng : p.lng;
+          map.panTo([targetLat, targetLng], { animate: true });
+        }
       });
       dom.filmstripTrack.appendChild(item);
     });
@@ -1209,12 +1254,97 @@
         state.alignedOnly = !state.alignedOnly;
         dom.alignedFilterBtn.classList.toggle('active', state.alignedOnly);
         dom.alignedFilterBtn.setAttribute('aria-pressed', state.alignedOnly ? 'true' : 'false');
+
+        // If enabling Then & Now with active sub-filters that yield 0 matches, clear those sub-filters so aligned landmarks always appear
+        if (state.alignedOnly) {
+          const wouldMatch = alignedPhotos.some((p) => {
+            if (state.selectedAlbum !== 'all' && p.album !== state.selectedAlbum) return false;
+            if (state.selectedEra !== 'all' && getEraKey(p.year) !== state.selectedEra) return false;
+            const q = state.searchQuery.trim().toLowerCase();
+            if (q && !p._searchText.includes(q)) return false;
+            return true;
+          });
+          if (!wouldMatch) {
+            state.selectedEra = 'all';
+            if (dom.eraPills) {
+              dom.eraPills.querySelectorAll('.era-pill').forEach((pill) => {
+                pill.classList.toggle('active', pill.dataset.era === 'all');
+              });
+            }
+            if (state.searchQuery) {
+              state.searchQuery = '';
+              if (dom.searchInput) dom.searchInput.value = '';
+              if (dom.clearSearchBtn) dom.clearSearchBtn.classList.remove('visible');
+            }
+            const albumStillMatches = alignedPhotos.some(
+              (p) => state.selectedAlbum === 'all' || p.album === state.selectedAlbum
+            );
+            if (!albumStillMatches) {
+              state.selectedAlbum = 'all';
+              if (dom.albumFilterControl) {
+                dom.albumFilterControl.querySelectorAll('.seg-btn').forEach((b) => {
+                  b.classList.toggle('active', b.dataset.album === 'all');
+                });
+              }
+            }
+          }
+        }
+
         applyFilters();
+        if (dom.photoFeed) {
+          dom.photoFeed.scrollTop = 0;
+        }
+        if (state.alignedOnly && !isMobileViewport() && state.sidebarCollapsed) {
+          setSidebarCollapsed(false);
+        }
 
         if (state.alignedOnly && state.filteredPhotos.length > 0) {
-          const latlngs = state.filteredPhotos.map((p) => [p.lat, p.lng]);
-          map.flyToBounds(L.latLngBounds(latlngs), { padding: [48, 48], maxZoom: 15, duration: 0.8 });
+          const latlngs = state.filteredPhotos.map((p) => [
+            state.pinMode === 'all' ? p.displayLat || p.lat : p.lat,
+            state.pinMode === 'all' ? p.displayLng || p.lng : p.lng,
+          ]);
+          map.flyToBounds(L.latLngBounds(latlngs), {
+            padding: [56, 56],
+            maxZoom: 16,
+            duration: 0.75,
+          });
+        } else if (!state.alignedOnly) {
+          if (state.selectedAlbum === 'menlo-park') {
+            map.flyTo([37.4529, -122.1842], 15, { duration: 0.75 });
+          } else if (
+            state.selectedAlbum === 'santa-cruz' ||
+            state.selectedAlbum === 'scpl-postcards' ||
+            state.selectedAlbum === 'scpl-snapshots'
+          ) {
+            map.flyTo([37.015, -122.055], 11, { duration: 0.75 });
+          } else {
+            map.flyTo([37.21, -122.11], 10, { duration: 0.75 });
+          }
         }
+      });
+    }
+
+    // Launch Interactive Past-in-Present Street View Comparison Modal (Compare Street View CTA)
+    if (dom.compareStreetviewBtn) {
+      dom.compareStreetviewBtn.addEventListener('click', () => {
+        if (alignedPhotos.length === 0) return;
+        const filteredAligned = state.filteredPhotos.filter((p) => Boolean(p._alignment));
+        const selectedAligned = alignedPhotos.find((p) => p.id === state.selectedPhotoId);
+        const startPhoto =
+          selectedAligned ||
+          (filteredAligned.length > 0 ? filteredAligned[0] : alignedPhotos[0]);
+
+        if (isMobileViewport() && !state.sidebarCollapsed) {
+          setSidebarCollapsed(true);
+        }
+
+        const targetLat =
+          state.pinMode === 'all' ? startPhoto.displayLat || startPhoto.lat : startPhoto.lat;
+        const targetLng =
+          state.pinMode === 'all' ? startPhoto.displayLng || startPhoto.lng : startPhoto.lng;
+        map.flyTo([targetLat, targetLng], Math.max(map.getZoom(), 15), { duration: 0.65 });
+
+        openPhotoModal(startPhoto, alignedPhotos, 'pip');
       });
     }
 
