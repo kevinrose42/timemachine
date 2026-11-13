@@ -93,6 +93,8 @@
     modeClusteredBtn: document.getElementById('mode-clustered-btn'),
     randomPhotoBtn: document.getElementById('random-photo-btn'),
     sidebar: document.getElementById('sidebar'),
+    sidebarBackdrop: document.getElementById('sidebar-backdrop'),
+    sidebarMobileCloseBtn: document.getElementById('sidebar-mobile-close-btn'),
     sidebarToggleBtn: document.getElementById('sidebar-toggle-btn'),
     sidebarToggleLabel: document.getElementById('sidebar-toggle-label'),
     searchInput: document.getElementById('search-input'),
@@ -108,9 +110,13 @@
 
     // Photo Inspector Modal
     modalBackdrop: document.getElementById('photo-inspector-backdrop'),
+    modalFloatingCloseBtn: document.getElementById('modal-floating-close-btn'),
     modalCloseBtn: document.getElementById('inspector-close-btn'),
     modalPrevBtn: document.getElementById('modal-prev-btn'),
     modalNextBtn: document.getElementById('modal-next-btn'),
+    inspectorMain: document.querySelector('.inspector-main'),
+    inspectorStage: document.querySelector('.inspector-stage'),
+    inspectorDetails: document.querySelector('.inspector-details'),
     stageCounterPill: document.getElementById('stage-counter-pill'),
     inspectorImg: document.getElementById('inspector-img'),
     inspectorAlbumBadge: document.getElementById('inspector-album-badge'),
@@ -147,6 +153,38 @@
   let leaderLineLayer = null;
   const markerByPhotoId = new Map();
   let feedObserver = null;
+  const hasHoverSupport =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+  function isMobileViewport() {
+    return window.innerWidth <= 768;
+  }
+
+  function updateSidebarToggleLabel() {
+    if (!dom.sidebarToggleLabel) return;
+    if (state.sidebarCollapsed) {
+      dom.sidebarToggleLabel.textContent = `Search & List (${state.filteredPhotos.length.toLocaleString()})`;
+    } else {
+      dom.sidebarToggleLabel.textContent = 'Hide List';
+    }
+  }
+
+  function setSidebarCollapsed(collapsed) {
+    state.sidebarCollapsed = collapsed;
+    if (dom.sidebar) {
+      dom.sidebar.classList.toggle('collapsed', collapsed);
+    }
+    if (dom.sidebarBackdrop) {
+      dom.sidebarBackdrop.classList.toggle('visible', !collapsed && isMobileViewport());
+    }
+    updateSidebarToggleLabel();
+    if (map) {
+      setTimeout(() => {
+        map.invalidateSize();
+      }, 280);
+    }
+  }
 
   // Era bucket helper
   function getEraKey(year) {
@@ -304,6 +342,7 @@
     dom.allPinsCount.textContent = state.filteredPhotos.length;
     dom.landmarkPinsCount.textContent = uniqueLocs.size;
     dom.visiblePhotoCount.textContent = state.filteredPhotos.length;
+    updateSidebarToggleLabel();
 
     renderMapPins();
     renderPhotoFeed();
@@ -326,11 +365,13 @@
           zIndexOffset: isSelected ? 1000 : 0,
         });
 
-        marker.bindTooltip(() => createTooltipHtml(photo, 1), {
-          direction: 'top',
-          className: 'pin-hover-tooltip',
-          opacity: 1,
-        });
+        if (hasHoverSupport) {
+          marker.bindTooltip(() => createTooltipHtml(photo, 1), {
+            direction: 'top',
+            className: 'pin-hover-tooltip',
+            opacity: 1,
+          });
+        }
 
         marker.on('click', () => {
           const colocated = state.filteredPhotos.filter(
@@ -373,11 +414,13 @@
           zIndexOffset: isSelected ? 1000 : groupPhotos.length * 5,
         });
 
-        marker.bindTooltip(() => createTooltipHtml(leadPhoto, groupPhotos.length), {
-          direction: 'top',
-          className: 'pin-hover-tooltip',
-          opacity: 1,
-        });
+        if (hasHoverSupport) {
+          marker.bindTooltip(() => createTooltipHtml(leadPhoto, groupPhotos.length), {
+            direction: 'top',
+            className: 'pin-hover-tooltip',
+            opacity: 1,
+          });
+        }
 
         marker.on('click', () => {
           openPhotoModal(leadPhoto, groupPhotos);
@@ -576,6 +619,9 @@
   }
 
   function focusPhotoOnMapAndOpen(photo) {
+    if (isMobileViewport() && !state.sidebarCollapsed) {
+      setSidebarCollapsed(true);
+    }
     const targetLat = state.pinMode === 'all' ? photo.displayLat || photo.lat : photo.lat;
     const targetLng = state.pinMode === 'all' ? photo.displayLng || photo.lng : photo.lng;
     const targetZoom = Math.max(map.getZoom(), 16);
@@ -858,8 +904,10 @@
     // Render Co-Located Filmstrip if multiple photos share this coordinate
     renderModalFilmstrip(photo, colocated);
 
-    // Show Modal
+    // Show Modal and reset scroll position to top
     dom.modalBackdrop.classList.add('open');
+    if (dom.inspectorMain) dom.inspectorMain.scrollTop = 0;
+    if (dom.inspectorDetails) dom.inspectorDetails.scrollTop = 0;
 
     // Update active state on sidebar & pins
     updateSelectedVisualState(photo);
@@ -956,6 +1004,7 @@
         dom.albumFilterControl.querySelectorAll('.seg-btn').forEach((b) => {
           b.classList.toggle('active', b === btn);
         });
+        btn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
 
         applyFilters();
 
@@ -998,14 +1047,30 @@
       focusPhotoOnMapAndOpen(randomPhoto);
     });
 
-    // Sidebar Toggle
+    // Sidebar Toggle & Mobile Drawer Controls
     dom.sidebarToggleBtn.addEventListener('click', () => {
-      state.sidebarCollapsed = !state.sidebarCollapsed;
-      dom.sidebar.classList.toggle('collapsed', state.sidebarCollapsed);
-      dom.sidebarToggleLabel.textContent = state.sidebarCollapsed ? 'Show List' : 'Hide List';
-      setTimeout(() => {
-        map.invalidateSize();
-      }, 280);
+      setSidebarCollapsed(!state.sidebarCollapsed);
+    });
+
+    if (dom.sidebarMobileCloseBtn) {
+      dom.sidebarMobileCloseBtn.addEventListener('click', () => {
+        setSidebarCollapsed(true);
+      });
+    }
+
+    if (dom.sidebarBackdrop) {
+      dom.sidebarBackdrop.addEventListener('click', () => {
+        setSidebarCollapsed(true);
+      });
+    }
+
+    window.addEventListener('resize', () => {
+      if (dom.sidebarBackdrop) {
+        dom.sidebarBackdrop.classList.toggle(
+          'visible',
+          !state.sidebarCollapsed && isMobileViewport()
+        );
+      }
     });
 
     // Search Input
@@ -1033,28 +1098,35 @@
       applyFilters();
     });
 
-    // Region Quick Jumps
+    // Region Quick Jumps (auto-close sidebar drawer on mobile so map flyTo is visible)
+    function jumpToRegion(lat, lng, zoom, duration) {
+      if (isMobileViewport() && !state.sidebarCollapsed) {
+        setSidebarCollapsed(true);
+      }
+      map.flyTo([lat, lng], zoom, { duration });
+    }
+
     if (dom.jumpMenloPark) {
       dom.jumpMenloPark.addEventListener('click', () => {
-        map.flyTo([37.4529, -122.1842], 15, { duration: 0.8 });
+        jumpToRegion(37.4529, -122.1842, 15, 0.8);
       });
     }
 
     if (dom.jumpSantaCruz) {
       dom.jumpSantaCruz.addEventListener('click', () => {
-        map.flyTo([36.9741, -122.0308], 14, { duration: 0.8 });
+        jumpToRegion(36.9741, -122.0308, 14, 0.8);
       });
     }
 
     if (dom.jumpBoulderCreek) {
       dom.jumpBoulderCreek.addEventListener('click', () => {
-        map.flyTo([37.1261, -122.1222], 14, { duration: 0.8 });
+        jumpToRegion(37.1261, -122.1222, 14, 0.8);
       });
     }
 
     if (dom.jumpIreland) {
       dom.jumpIreland.addEventListener('click', () => {
-        map.flyTo([53.3043, -9.0729194], 16, { duration: 0.9 });
+        jumpToRegion(53.3043, -9.0729194, 16, 0.9);
       });
     }
 
@@ -1067,6 +1139,9 @@
 
     // Modal Controls
     dom.modalCloseBtn.addEventListener('click', closePhotoModal);
+    if (dom.modalFloatingCloseBtn) {
+      dom.modalFloatingCloseBtn.addEventListener('click', closePhotoModal);
+    }
     dom.modalBackdrop.addEventListener('click', (e) => {
       if (e.target === dom.modalBackdrop) {
         closePhotoModal();
@@ -1079,6 +1154,34 @@
     dom.inspectorImg.addEventListener('click', () => {
       dom.inspectorImg.classList.toggle('zoomed');
     });
+
+    // Touch swipe left / right on the photo stage for mobile navigation
+    if (dom.inspectorStage) {
+      let touchStartX = 0;
+      let touchStartY = 0;
+      dom.inspectorStage.addEventListener(
+        'touchstart',
+        (e) => {
+          if (e.touches.length !== 1) return;
+          touchStartX = e.touches[0].clientX;
+          touchStartY = e.touches[0].clientY;
+        },
+        { passive: true }
+      );
+      dom.inspectorStage.addEventListener(
+        'touchend',
+        (e) => {
+          if (dom.inspectorImg.classList.contains('zoomed')) return;
+          if (!e.changedTouches || e.changedTouches.length !== 1) return;
+          const dx = e.changedTouches[0].clientX - touchStartX;
+          const dy = e.changedTouches[0].clientY - touchStartY;
+          if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+            stepModalPhoto(dx < 0 ? 1 : -1);
+          }
+        },
+        { passive: true }
+      );
+    }
 
     // Keyboard Shortcuts
     window.addEventListener('keydown', (e) => {
@@ -1111,6 +1214,12 @@
 
     initMap();
     bindEvents();
+
+    // Start with the sidebar drawer collapsed on mobile so the map is immediately visible
+    if (isMobileViewport()) {
+      setSidebarCollapsed(true);
+    }
+
     applyFilters();
   }
 
