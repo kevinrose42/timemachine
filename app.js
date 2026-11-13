@@ -86,6 +86,7 @@
     albumMpCount: document.getElementById('album-mp-count'),
     albumScCount: document.getElementById('album-sc-count'),
     albumPcCount: document.getElementById('album-pc-count'),
+    albumSsCount: document.getElementById('album-ss-count'),
     allPinsCount: document.getElementById('all-pins-count'),
     landmarkPinsCount: document.getElementById('landmark-pins-count'),
     modeAllPinsBtn: document.getElementById('mode-all-pins-btn'),
@@ -467,13 +468,17 @@
           ? 'santa-cruz'
           : photo.album === 'scpl-postcards'
             ? 'scpl-postcards'
-            : '';
+            : photo.album === 'scpl-snapshots'
+              ? 'scpl-snapshots'
+              : '';
       const albumBadgeLabel =
         photo.album === 'santa-cruz'
           ? 'SCPL'
           : photo.album === 'scpl-postcards'
             ? 'POSTCARD'
-            : 'MP';
+            : photo.album === 'scpl-snapshots'
+              ? 'SNAPSHOT'
+              : 'MP';
 
       card.innerHTML = `
         <div class="photo-card-thumb-wrap">
@@ -799,6 +804,7 @@
       dom.inspectorAlbumBadge.textContent = photo.albumShortTitle || 'Archive';
       dom.inspectorAlbumBadge.classList.toggle('santa-cruz', photo.album === 'santa-cruz');
       dom.inspectorAlbumBadge.classList.toggle('scpl-postcards', photo.album === 'scpl-postcards');
+      dom.inspectorAlbumBadge.classList.toggle('scpl-snapshots', photo.album === 'scpl-snapshots');
     }
 
     // Year & Catalog Badges
@@ -955,7 +961,11 @@
 
         if (albumSlug === 'menlo-park') {
           map.flyTo([37.4529, -122.1842], 15, { duration: 0.85 });
-        } else if (albumSlug === 'santa-cruz' || albumSlug === 'scpl-postcards') {
+        } else if (
+          albumSlug === 'santa-cruz' ||
+          albumSlug === 'scpl-postcards' ||
+          albumSlug === 'scpl-snapshots'
+        ) {
           map.flyTo([37.015, -122.055], 11, { duration: 0.85 });
         } else {
           map.flyTo([37.21, -122.11], 10, { duration: 0.85 });
@@ -1088,6 +1098,7 @@
     const mpCount = allPhotos.filter((p) => p.album === 'menlo-park').length;
     const scCount = allPhotos.filter((p) => p.album === 'santa-cruz').length;
     const pcCount = allPhotos.filter((p) => p.album === 'scpl-postcards').length;
+    const ssCount = allPhotos.filter((p) => p.album === 'scpl-snapshots').length;
 
     if (dom.headerSummaryText && allPhotos.length > 0) {
       dom.headerSummaryText.textContent = `${allPhotos.length.toLocaleString()} Geolocated Items · Menlo Park & Santa Cruz`;
@@ -1096,6 +1107,7 @@
     if (dom.albumMpCount) dom.albumMpCount.textContent = mpCount;
     if (dom.albumScCount) dom.albumScCount.textContent = scCount;
     if (dom.albumPcCount) dom.albumPcCount.textContent = pcCount;
+    if (dom.albumSsCount) dom.albumSsCount.textContent = ssCount;
 
     initMap();
     bindEvents();

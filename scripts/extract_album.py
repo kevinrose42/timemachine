@@ -49,6 +49,15 @@ ALBUMS = [
         "center": [36.9950, -122.0350],
         "zoom": 11,
     },
+    {
+        "slug": "scpl-snapshots",
+        "title": "Santa Cruz Public Libraries — Snapshot Stories",
+        "shortTitle": "SCPL Snapshots",
+        "shortUrl": "https://photos.app.goo.gl/v3rfeFu2gwqxNFVb7",
+        "defaultLocation": "Santa Cruz County, CA",
+        "center": [36.9850, -122.0250],
+        "zoom": 12,
+    },
 ]
 
 USER_AGENT = (
@@ -76,7 +85,7 @@ def call_batchexecute(rpc_calls: list) -> str:
 def extract_year_from_text(text: str):
     if not text:
         return None
-    m = re.search(r"\b(18[4-9]\d|19\d{2}|20[0-2]\d)\b", str(text))
+    m = re.search(r"\b(18[4-9]\d|19\d{2}|20[0-2]\d)s?\b", str(text))
     return int(m.group(1)) if m else None
 
 
