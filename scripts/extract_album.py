@@ -34,10 +34,19 @@ ALBUMS = [
     {
         "slug": "santa-cruz",
         "title": "Santa Cruz Public Libraries — Photograph Collection",
-        "shortTitle": "Santa Cruz",
+        "shortTitle": "SCPL Photos",
         "shortUrl": "https://photos.app.goo.gl/XmBhLr6D7ck8fCUu6",
         "defaultLocation": "Santa Cruz County, CA",
         "center": [37.0150, -122.0550],
+        "zoom": 11,
+    },
+    {
+        "slug": "scpl-postcards",
+        "title": "Santa Cruz Public Libraries — Postcard Collection",
+        "shortTitle": "SCPL Postcards",
+        "shortUrl": "https://photos.app.goo.gl/KVwZhnmEhSdExCZWA",
+        "defaultLocation": "Santa Cruz County, CA",
+        "center": [36.9950, -122.0350],
         "zoom": 11,
     },
 ]
@@ -92,6 +101,7 @@ def parse_photo_metadata(caption: str, filename: str, ts_ms: int, tz_offset_ms: 
 
                 raw_date = str(blob.get("date") or "").strip()
                 coverage = str(blob.get("coverage") or "").strip()
+                year_reasoning = str(blob.get("how_year_was_determined") or "").strip()
 
                 year = extract_year_from_text(raw_date)
                 year_label = raw_date if raw_date else None
@@ -99,7 +109,6 @@ def parse_photo_metadata(caption: str, filename: str, ts_ms: int, tz_offset_ms: 
                 if year is None and coverage:
                     year = extract_year_from_text(coverage)
                     if year and not year_label:
-                        # Check if coverage has decade like '1910s'
                         m_dec = re.search(r"\b(18[4-9]\d|19\d{2}|20[0-2]\d)s?\b", coverage)
                         year_label = m_dec.group(0) if m_dec else str(year)
 
@@ -107,6 +116,11 @@ def parse_photo_metadata(caption: str, filename: str, ts_ms: int, tz_offset_ms: 
                     year = extract_year_from_text(title + " " + notes)
                     if year and not year_label:
                         year_label = str(year)
+
+                if year is None and year_reasoning:
+                    year = extract_year_from_text(year_reasoning)
+                    if year and not year_label:
+                        year_label = f"c. {year}"
 
                 if year is None and ts_ms is not None:
                     try:

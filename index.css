@@ -1149,6 +1149,12 @@ body {
   border-color: hsla(168, 68%, 36%, 0.28);
 }
 
+.badge-album.scpl-postcards {
+  background: hsla(28, 84%, 46%, 0.14);
+  color: hsl(24, 82%, 34%);
+  border-color: hsla(28, 84%, 46%, 0.3);
+}
+
 .photo-card-album-badge {
   position: absolute;
   top: 4px;
@@ -1166,6 +1172,10 @@ body {
 
 .photo-card-album-badge.santa-cruz {
   background: hsla(168, 72%, 28%, 0.88);
+}
+
+.photo-card-album-badge.scpl-postcards {
+  background: hsla(24, 82%, 38%, 0.9);
 }
 
 .inspector-scroll-content {
